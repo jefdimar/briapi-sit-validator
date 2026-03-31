@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"io"
 	"mime/multipart"
 
 	"github.com/xuri/excelize/v2"
@@ -20,11 +21,16 @@ func Open(fh *multipart.FileHeader) (*File, error) {
 	}
 	defer src.Close()
 
-	ef, err := excelize.OpenReader(src)
+	return FromReader(src)
+}
+
+// FromReader parses an xlsx workbook from any io.Reader.
+// Useful for testing and non-multipart callers.
+func FromReader(r io.Reader) (*File, error) {
+	ef, err := excelize.OpenReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("parse excel: %w", err)
 	}
-
 	return &File{f: ef}, nil
 }
 

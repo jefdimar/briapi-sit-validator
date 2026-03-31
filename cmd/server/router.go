@@ -1,0 +1,86 @@
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"path/filepath"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/jefdimar/briapi-sit-validator/internal/config"
+	"github.com/jefdimar/briapi-sit-validator/internal/parser"
+	"github.com/jefdimar/briapi-sit-validator/internal/reporter"
+	"github.com/jefdimar/briapi-sit-validator/internal/validator"
+)
+
+// setupRouter builds and returns the Gin engine with all routes registered.
+// Extracted from main() to allow handler-level testing.
+func setupRouter(cfg *config.Config) *gin.Engine {
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(requestLogger())
+
+	maxBytes := int64(cfg.Server.MaxUploadSizeMB) << 20
+
+	router.GET("/api/v1/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
+	})
+
+	router.POST("/api/v1/validate", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+
+		fh, err := c.FormFile("file")
+		if err != nil {
+			if strings.Contains(err.Error(), "http: request body too large") {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("file too large, max %dMB", cfg.Server.MaxUploadSizeMB)})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+			return
+		}
+
+		if strings.ToLower(filepath.Ext(fh.Filename)) != ".xlsx" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file format: expected .xlsx"})
+			return
+		}
+
+		p, err := parser.Open(fh)
+		if err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("cannot parse excel file: %s", err.Error())})
+			return
+		}
+		defer p.Close()
+
+		var filterSheets []string
+		if raw := c.Query("sheets"); raw != "" {
+			for _, s := range strings.Split(raw, ",") {
+				if t := strings.TrimSpace(s); t != "" {
+					filterSheets = append(filterSheets, t)
+				}
+			}
+		}
+
+		report := validator.Validate(p, cfg, filterSheets)
+
+		if len(report.Sheets) == 0 {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "no recognizable product sheets found"})
+			return
+		}
+
+		format := strings.ToLower(c.DefaultQuery("format", "json"))
+		if format == "excel" {
+			data, err := reporter.BuildExcel(p, report, cfg)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+				return
+			}
+			c.Header("Content-Disposition", `attachment; filename="sit_validation_report.xlsx"`)
+			c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+			return
+		}
+
+		c.JSON(http.StatusOK, reporter.BuildJSON(report))
+	})
+
+	return router
+}
