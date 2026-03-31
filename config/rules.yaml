@@ -1,0 +1,66 @@
+server:
+  port: 8080
+  max_upload_size_mb: 20
+
+excel:
+  skip_sheets:
+    - Changelog
+    - Daftar Isi
+    - Step
+  header_row: 9          # 1-indexed row where column headers are
+  data_start_row: 10     # first test case row
+
+  metadata:
+    - key: provider_name
+      label: "Nama Penyedia Layanan:"
+      row: 3
+      col: 1             # column B (0-indexed: A=0, B=1)
+    - key: partner_name
+      label: "Nama Pengguna Layanan :"
+      row: 5
+      col: 1
+    - key: test_date
+      label: "Tanggal Pengujian:"
+      row: 6
+      col: 1
+
+  columns:
+    no:              0   # Column A
+    service:         1   # Column B
+    scenario:        2   # Column C
+    expected_result: 3   # Column D
+    request:         4   # Column E
+    response:        5   # Column F
+    result:          6   # Column G
+    notes:           7   # Column H
+
+validation:
+  request:
+    required: true
+    empty_sentinel_values:
+      - "URL Endpoint:\n Header Request:\n Request Body:"
+      - "URL Endpoint: Header Request: Request Body:"
+      - ""
+    error_message: "Request belum diisi (harus berupa curl: URL Endpoint, Header Request, Request Body)"
+
+  response:
+    required: true
+    empty_sentinel_values:
+      - "Response Body:"
+      - ""
+    error_message: "Response Body belum diisi"
+
+  result:
+    required: true
+    allowed_values:
+      - "Passed"
+      - "Not Passed"
+      - "passed"
+      - "not passed"
+      - "PASSED"
+      - "NOT PASSED"
+    error_message: "Result belum diisi (isi dengan: Passed / Not Passed)"
+
+  notes:
+    required_if_result: "not passed"   # case-insensitive match
+    error_message: "Notes wajib diisi jika Result adalah Not Passed"
