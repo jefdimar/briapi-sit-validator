@@ -52,9 +52,10 @@ func testCfg() *config.Config {
 				ErrorMessage:        "Response Body belum diisi",
 			},
 			Result: config.ResultValidation{
-				Required:      true,
-				AllowedValues: []string{"Passed", "Not Passed", "passed", "not passed"},
-				ErrorMessage:  "Result belum diisi",
+				Required:            true,
+				AllowedValues:       []string{"Passed", "Not Passed", "passed", "not passed"},
+				ErrorMessage:        "Result belum diisi",
+				InvalidValueMessage: "Result tidak valid",
 			},
 			Notes: config.NotesValidation{
 				RequiredIfResult: "not passed",
@@ -335,4 +336,22 @@ func TestRequestLogger_GeneratesRequestIDIfMissing(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// --- T-1: file too large (413) ---------------------------------------------
+
+func TestValidate_FileTooLarge_Returns413(t *testing.T) {
+	// Set a 1-byte limit so even a tiny body triggers it.
+	cfg := testCfg()
+	cfg.Server.MaxUploadSizeMB = 1
+	router := setupRouter(cfg)
+
+	// Build a body that exceeds 1 MB.
+	oversized := make([]byte, 1<<20+1) // 1 MiB + 1 byte
+	body, ct := multipartBody(t, "file", "big.xlsx", oversized)
+
+	w := perform(router, "POST", "/api/v1/validate", body, ct)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+	assert.Contains(t, w.Body.String(), "file too large")
 }

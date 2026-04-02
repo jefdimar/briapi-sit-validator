@@ -11,8 +11,9 @@ import (
 )
 
 // Validate runs the full validation pipeline against the parsed Excel file.
+// requestID is threaded into all log lines emitted during this request.
 // It processes each product sheet concurrently and returns a ValidationReport.
-func Validate(p *parser.File, cfg *config.Config, filterSheets []string) model.ValidationReport {
+func Validate(p *parser.File, cfg *config.Config, filterSheets []string, requestID string) model.ValidationReport {
 	allSheets := p.SheetNames()
 	skipSet := makeSet(cfg.Excel.SkipSheets)
 
@@ -34,7 +35,7 @@ func Validate(p *parser.File, cfg *config.Config, filterSheets []string) model.V
 		wg.Add(1)
 		go func(idx int, sheetName string) {
 			defer wg.Done()
-			results[idx] = validateSheet(p, sheetName, cfg)
+			results[idx] = validateSheet(p, sheetName, cfg, requestID)
 		}(i, sheet)
 	}
 	wg.Wait()
@@ -43,14 +44,14 @@ func Validate(p *parser.File, cfg *config.Config, filterSheets []string) model.V
 }
 
 // validateSheet validates all metadata and test case rows within a single sheet.
-func validateSheet(p *parser.File, sheet string, cfg *config.Config) model.SheetReport {
-	logger := slog.With("sheet", sheet)
+func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID string) model.SheetReport {
+	logger := slog.With("request_id", requestID, "sheet", sheet)
 
 	meta := validateMetadata(p, sheet, cfg.Excel.Metadata)
 
 	rows, err := p.GetRows(sheet)
 	if err != nil {
-		logger.Error("failed to read rows", "error", err)
+		logger.Error("failed to read rows", "error", err, "row", 0)
 		return model.SheetReport{
 			SheetName: sheet,
 			Metadata:  meta,
@@ -74,7 +75,12 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config) model.Sheet
 		}
 
 		tc := validateTestCase(row, cfg.Excel.Columns, cfg.Validation)
-		logger.Debug("validated row", "row", rowIdx+1, "no", tc.No, "status", tc.Status)
+		tc.RowNumber = rowIdx + 1 // store 1-indexed Excel row for reporter and logs
+		if tc.Status == "incomplete" {
+			logger.Info("row incomplete", "row", tc.RowNumber, "no", tc.No, "issues", len(tc.Issues))
+		} else {
+			logger.Debug("row ok", "row", tc.RowNumber, "no", tc.No)
+		}
 		testCases = append(testCases, tc)
 	}
 

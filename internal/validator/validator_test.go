@@ -178,7 +178,7 @@ func TestValidate_AllSheetsOK(t *testing.T) {
 		}
 	})
 
-	report := Validate(p, cfg, []string{"ProductA", "ProductB"})
+	report := Validate(p, cfg, []string{"ProductA", "ProductB"}, "test-req")
 
 	assert.Equal(t, "ok", report.Status)
 	assert.Equal(t, 2, report.Summary.TotalSheets)
@@ -196,7 +196,7 @@ func TestValidate_IncompleteSheet(t *testing.T) {
 		addIncompleteRow(f, "ProductA", 11, "1.2")
 	})
 
-	report := Validate(p, cfg, []string{"ProductA"})
+	report := Validate(p, cfg, []string{"ProductA"}, "test-req")
 
 	require.Len(t, report.Sheets, 1)
 	s := report.Sheets[0]
@@ -218,7 +218,7 @@ func TestValidate_SkipSheets(t *testing.T) {
 		addOKRow(f, "ProductA", 10, "1.1")
 	})
 
-	report := Validate(p, cfg, nil)
+	report := Validate(p, cfg, nil, "test-req")
 
 	for _, s := range report.Sheets {
 		assert.NotEqual(t, "Changelog", s.SheetName)
@@ -235,7 +235,7 @@ func TestValidate_FilterSheets(t *testing.T) {
 		addOKRow(f, "ProductA", 10, "1.1")
 	})
 
-	report := Validate(p, cfg, []string{"ProductA"})
+	report := Validate(p, cfg, []string{"ProductA"}, "test-req")
 
 	require.Len(t, report.Sheets, 1)
 	assert.Equal(t, "ProductA", report.Sheets[0].SheetName)
@@ -248,7 +248,7 @@ func TestValidate_NoMatchingSheets(t *testing.T) {
 	})
 
 	// Filter requests a sheet that doesn't exist
-	report := Validate(p, cfg, []string{"NonExistent"})
+	report := Validate(p, cfg, []string{"NonExistent"}, "test-req")
 	assert.Len(t, report.Sheets, 0)
 }
 
@@ -263,7 +263,7 @@ func TestValidate_StopsAtEmptyNoColumn(t *testing.T) {
 		addOKRow(f, "ProductA", 13, "1.4") // must NOT be counted
 	})
 
-	report := Validate(p, cfg, []string{"ProductA"})
+	report := Validate(p, cfg, []string{"ProductA"}, "test-req")
 
 	require.Len(t, report.Sheets, 1)
 	assert.Equal(t, 2, report.Sheets[0].Summary.Total, "should stop at first empty no column")
@@ -285,7 +285,7 @@ func TestValidate_ConcurrentSheets_CorrectResults(t *testing.T) {
 		}
 	})
 
-	report := Validate(p, cfg, sheets)
+	report := Validate(p, cfg, sheets, "test-req")
 
 	assert.Len(t, report.Sheets, 8)
 	totalOK := 0

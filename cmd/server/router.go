@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -31,7 +33,7 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 
 		fh, err := c.FormFile("file")
 		if err != nil {
-			if strings.Contains(err.Error(), "http: request body too large") {
+			if errors.As(err, new(*http.MaxBytesError)) {
 				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("file too large, max %dMB", cfg.Server.MaxUploadSizeMB)})
 				return
 			}
@@ -51,6 +53,9 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 		}
 		defer p.Close()
 
+		requestID, _ := c.Get("request_id")
+		reqID := fmt.Sprintf("%v", requestID)
+
 		var filterSheets []string
 		if raw := c.Query("sheets"); raw != "" {
 			for _, s := range strings.Split(raw, ",") {
@@ -60,7 +65,7 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 			}
 		}
 
-		report := validator.Validate(p, cfg, filterSheets)
+		report := validator.Validate(p, cfg, filterSheets, reqID)
 
 		if len(report.Sheets) == 0 {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "no recognizable product sheets found"})
@@ -71,6 +76,7 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 		if format == "excel" {
 			data, err := reporter.BuildExcel(p, report, cfg)
 			if err != nil {
+				slog.Error("excel reporter error", "request_id", reqID, "error", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 				return
 			}

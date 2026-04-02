@@ -46,7 +46,7 @@ func validateTestCase(row []string, cols config.ColumnsConfig, vcfg config.Valid
 		if resultVal == "" {
 			result.Issues = append(result.Issues, vcfg.Result.ErrorMessage)
 		} else if !isAllowed(resultVal, vcfg.Result.AllowedValues) {
-			result.Issues = append(result.Issues, "Result tidak valid, harus Passed atau Not Passed")
+			result.Issues = append(result.Issues, vcfg.Result.InvalidValueMessage)
 		}
 	}
 
@@ -68,12 +68,16 @@ func validateTestCase(row []string, cols config.ColumnsConfig, vcfg config.Valid
 }
 
 // isEmpty returns true if val is blank or matches any sentinel value.
+// Both val and each sentinel are normalized (CRLF → LF) before comparison so
+// that Windows Excel files (which store cell line-breaks as \r\n) match YAML
+// sentinels that use \n.
 func isEmpty(val string, sentinels []string) bool {
-	if val == "" {
+	normalized := strings.ReplaceAll(val, "\r\n", "\n")
+	if normalized == "" {
 		return true
 	}
 	for _, s := range sentinels {
-		if val == s {
+		if normalized == strings.ReplaceAll(s, "\r\n", "\n") {
 			return true
 		}
 	}

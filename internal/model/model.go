@@ -40,9 +40,10 @@ type SheetSummary struct {
 
 // TestCaseResult holds the validation result for a single test case row.
 type TestCaseResult struct {
-	No       string   `json:"no"`
-	Service  string   `json:"service"`
-	Scenario string   `json:"scenario"`
-	Status   string   `json:"status"` // "ok" | "incomplete"
-	Issues   []string `json:"issues"`
+	No        string   `json:"no"`
+	Service   string   `json:"service"`
+	Scenario  string   `json:"scenario"`
+	Status    string   `json:"status"` // "ok" | "incomplete"
+	Issues    []string `json:"issues"`
+	RowNumber int      `json:"-"` // 1-indexed Excel row; not exposed in JSON output
 }

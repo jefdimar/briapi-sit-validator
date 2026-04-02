@@ -60,6 +60,7 @@ validation:
       - "PASSED"
       - "NOT PASSED"
     error_message: "Result belum diisi (isi dengan: Passed / Not Passed)"
+    invalid_value_message: "Result tidak valid, harus Passed atau Not Passed"
 
   notes:
     required_if_result: "not passed"   # case-insensitive match
