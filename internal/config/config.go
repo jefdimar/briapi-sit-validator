@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -59,9 +61,10 @@ type FieldValidation struct {
 }
 
 type ResultValidation struct {
-	Required      bool     `yaml:"required"`
-	AllowedValues []string `yaml:"allowed_values"`
-	ErrorMessage  string   `yaml:"error_message"`
+	Required            bool     `yaml:"required"`
+	AllowedValues       []string `yaml:"allowed_values"`
+	ErrorMessage        string   `yaml:"error_message"`         // used when result is empty
+	InvalidValueMessage string   `yaml:"invalid_value_message"` // used when result is not in allowed_values
 }
 
 type NotesValidation struct {
@@ -88,5 +91,38 @@ func Load(path string) (*Config, error) {
 		cfg.Server.MaxUploadSizeMB = 20
 	}
 
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
 	return &cfg, nil
+}
+
+// validate checks that all required config fields are set to sensible values.
+func (c *Config) validate() error {
+	if c.Excel.HeaderRow <= 0 {
+		return errors.New("excel.header_row must be > 0")
+	}
+	if c.Excel.DataStartRow <= 0 {
+		return errors.New("excel.data_start_row must be > 0")
+	}
+	if c.Excel.DataStartRow <= c.Excel.HeaderRow {
+		return errors.New("excel.data_start_row must be greater than excel.header_row")
+	}
+	if len(c.Validation.Result.AllowedValues) == 0 {
+		return errors.New("validation.result.allowed_values must not be empty")
+	}
+	msgs := map[string]string{
+		"validation.request.error_message":              c.Validation.Request.ErrorMessage,
+		"validation.response.error_message":             c.Validation.Response.ErrorMessage,
+		"validation.result.error_message":               c.Validation.Result.ErrorMessage,
+		"validation.result.invalid_value_message":       c.Validation.Result.InvalidValueMessage,
+		"validation.notes.error_message":                c.Validation.Notes.ErrorMessage,
+	}
+	for field, msg := range msgs {
+		if strings.TrimSpace(msg) == "" {
+			return fmt.Errorf("%s must not be empty", field)
+		}
+	}
+	return nil
 }

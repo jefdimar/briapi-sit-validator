@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	colorGreen = "C6EFCE" // Excel-style light green
-	colorRed   = "FFC7CE" // Excel-style light red
-	headerCol  = 9        // Column I (1-indexed)
+	colorGreen  = "C6EFCE" // Excel-style light green
+	colorRed    = "FFC7CE" // Excel-style light red
+	colorHeader = "D9D9D9" // light grey for the Validation Result header cell
+	headerCol   = 9        // Column I (1-indexed)
 )
 
 // BuildExcel annotates the original workbook with a "Validation Result" column
@@ -36,11 +37,18 @@ func BuildExcel(p *parser.File, report model.ValidationReport, cfg *config.Confi
 	if err != nil {
 		return nil, fmt.Errorf("create red style: %w", err)
 	}
+	headerStyle, err := buildBoldStyle(f, colorHeader)
+	if err != nil {
+		return nil, fmt.Errorf("create header style: %w", err)
+	}
 
 	for sheetName, sr := range sheetMap {
 		headerCell, _ := excelize.CoordinatesToCellName(headerCol, cfg.Excel.HeaderRow)
 		if err := f.SetCellValue(sheetName, headerCell, "Validation Result"); err != nil {
 			return nil, fmt.Errorf("set header cell %s!%s: %w", sheetName, headerCell, err)
+		}
+		if err := f.SetCellStyle(sheetName, headerCell, headerCell, headerStyle); err != nil {
+			return nil, fmt.Errorf("set header style %s!%s: %w", sheetName, headerCell, err)
 		}
 
 		// Annotate metadata section: highlight missing fields.
@@ -52,9 +60,10 @@ func BuildExcel(p *parser.File, report model.ValidationReport, cfg *config.Confi
 			}
 		}
 
-		// Annotate test case rows.
-		for i, tc := range sr.TestCases {
-			rowNum := cfg.Excel.DataStartRow + i
+		// Annotate test case rows using the stored Excel row number so that
+		// blank rows in the original sheet don't cause misaligned annotations.
+		for _, tc := range sr.TestCases {
+			rowNum := tc.RowNumber
 			cellName, _ := excelize.CoordinatesToCellName(headerCol, rowNum)
 
 			var cellVal string
@@ -85,6 +94,17 @@ func BuildExcel(p *parser.File, report model.ValidationReport, cfg *config.Confi
 
 func buildStyle(f *excelize.File, bgColor string) (int, error) {
 	return f.NewStyle(&excelize.Style{
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{bgColor},
+			Pattern: 1,
+		},
+	})
+}
+
+func buildBoldStyle(f *excelize.File, bgColor string) (int, error) {
+	return f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{Bold: true},
 		Fill: excelize.Fill{
 			Type:    "pattern",
 			Color:   []string{bgColor},

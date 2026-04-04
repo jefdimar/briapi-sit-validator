@@ -57,9 +57,9 @@ func sampleReport(sheetName string) model.ValidationReport {
 				},
 				Summary: model.SheetSummary{Total: 2, OK: 1, Incomplete: 1},
 				TestCases: []model.TestCaseResult{
-					{No: "1.1", Service: "Svc", Scenario: "Happy", Status: "ok", Issues: []string{}},
+					{No: "1.1", Service: "Svc", Scenario: "Happy", Status: "ok", Issues: []string{}, RowNumber: 10},
 					{No: "1.2", Service: "Svc", Scenario: "Error", Status: "incomplete",
-						Issues: []string{"Request belum diisi", "Response Body belum diisi"}},
+						Issues: []string{"Request belum diisi", "Response Body belum diisi"}, RowNumber: 11},
 				},
 			},
 		},
@@ -180,11 +180,11 @@ func TestBuildExcel_MultipleSheets(t *testing.T) {
 		Sheets: []model.SheetReport{
 			{SheetName: "ProductA", Metadata: map[string]model.MetaField{},
 				TestCases: []model.TestCaseResult{
-					{Status: "ok", Issues: []string{}},
+					{Status: "ok", Issues: []string{}, RowNumber: 10},
 				}},
 			{SheetName: "ProductB", Metadata: map[string]model.MetaField{},
 				TestCases: []model.TestCaseResult{
-					{Status: "incomplete", Issues: []string{"some issue"}},
+					{Status: "incomplete", Issues: []string{"some issue"}, RowNumber: 10},
 				}},
 		},
 	}
@@ -204,6 +204,60 @@ func TestBuildExcel_MultipleSheets(t *testing.T) {
 	valB, err := ef.GetCellValue("ProductB", okCell)
 	require.NoError(t, err)
 	assert.Equal(t, "some issue", valB)
+}
+
+// --- T-5: Row-mapping correctness when blank rows exist in original sheet ---
+
+// TestBuildExcel_RowMappingWithGaps verifies that annotations land on the
+// correct Excel row even when blank rows exist between test cases.
+// Before I-2, the reporter used DataStartRow+i which would misalign; now it
+// uses TestCaseResult.RowNumber so each annotation targets the exact source row.
+func TestBuildExcel_RowMappingWithGaps(t *testing.T) {
+	cfg := makeConfig()
+	p := buildParserFile(t, func(f *excelize.File) {
+		f.NewSheet("ProductA")
+	})
+
+	// Row 10: first test case (ok)
+	// Row 11: intentionally BLANK (gap)
+	// Row 12: second test case (incomplete) — RowNumber=12, not 11
+	report := model.ValidationReport{
+		Sheets: []model.SheetReport{
+			{
+				SheetName: "ProductA",
+				Metadata:  map[string]model.MetaField{},
+				TestCases: []model.TestCaseResult{
+					{Status: "ok", Issues: []string{}, RowNumber: 10},
+					{Status: "incomplete", Issues: []string{"Request belum diisi"}, RowNumber: 12},
+				},
+			},
+		},
+	}
+
+	data, err := BuildExcel(p, report, cfg)
+	require.NoError(t, err)
+
+	ef, err := excelize.OpenReader(bytes.NewReader(data))
+	require.NoError(t, err)
+	defer ef.Close()
+
+	// Row 10 col I → "✓ OK"
+	okCell, _ := excelize.CoordinatesToCellName(9, 10)
+	valOK, err := ef.GetCellValue("ProductA", okCell)
+	require.NoError(t, err)
+	assert.Equal(t, "✓ OK", valOK)
+
+	// Row 11 col I → must be EMPTY (the gap row was not annotated)
+	gapCell, _ := excelize.CoordinatesToCellName(9, 11)
+	valGap, err := ef.GetCellValue("ProductA", gapCell)
+	require.NoError(t, err)
+	assert.Empty(t, valGap, "gap row must not be annotated")
+
+	// Row 12 col I → issue text
+	issueCell, _ := excelize.CoordinatesToCellName(9, 12)
+	valIssue, err := ef.GetCellValue("ProductA", issueCell)
+	require.NoError(t, err)
+	assert.Contains(t, valIssue, "Request belum diisi")
 }
 
 func TestBuildExcel_MissingMetadataCellHighlighted(t *testing.T) {

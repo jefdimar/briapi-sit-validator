@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -65,7 +66,7 @@ func requestLogger() gin.HandlerFunc {
 		start := time.Now()
 		requestID := c.GetHeader("X-Request-ID")
 		if requestID == "" {
-			requestID = fmt.Sprintf("%d", start.UnixNano())
+			requestID = fmt.Sprintf("%016x", rand.Uint64())
 		}
 		c.Set("request_id", requestID)
 		c.Next()
