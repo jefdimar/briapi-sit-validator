@@ -1,0 +1,612 @@
+{
+  "info": {
+    "_postman_id": "briapi-sit-validator-collection",
+    "name": "BRIAPI SIT Validator",
+    "description": "Collection for testing the BRIAPI SIT Validator service.\n\nThis service validates Excel files submitted by BRIAPI partners as part of the System Integration Testing (SIT) process. It checks that all test case rows in the file have been properly filled in (Request, Response, Result, Notes).\n\n## Setup\n1. Import this collection into Postman.\n2. Import the `BRIAPI_SIT_Validator.postman_environment.json` environment file.\n3. Select the **BRIAPI SIT Validator — Local** environment.\n4. Set the `sit_file_path` environment variable to the absolute path of your `.xlsx` SIT file.\n5. Run the server locally: `go run -mod=vendor ./cmd/server`\n\n## Endpoints\n- `GET  /api/v1/health`       — Health check\n- `POST /api/v1/validate`     — Validate a SIT Excel file (JSON or Excel output)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080",
+      "type": "string",
+      "description": "Override with your environment variable {{base_url}}"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 — Health",
+      "description": "Check that the service is running and get the current version.",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/health",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "health"]
+            },
+            "description": "Returns HTTP 200 with `{\"status\": \"ok\", \"version\": \"1.0.0\"}` when the service is running."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {"key": "Content-Type", "value": "application/json; charset=utf-8"}
+              ],
+              "body": "{\n  \"status\": \"ok\",\n  \"version\": \"1.0.0\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has status ok', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('ok');",
+                  "});",
+                  "",
+                  "pm.test('Response has version field', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.version).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 — Validate (JSON response)",
+      "description": "Upload a SIT Excel file and receive a structured JSON validation report.",
+      "item": [
+        {
+          "name": "Validate — All Sheets (JSON)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "postman-{{$randomUUID}}",
+                "description": "Optional. If omitted the service generates one automatically."
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}",
+                  "description": "The SIT Excel file (.xlsx). Set sit_file_path in the environment."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"]
+            },
+            "description": "Validates all product sheets in the uploaded file.\n\nReturns a JSON report with:\n- `status`: `\"ok\"` or `\"incomplete\"`\n- `summary`: global counts (total sheets, OK/incomplete)\n- `sheets[]`: per-sheet metadata status and test case results"
+          },
+          "response": [
+            {
+              "name": "200 — Incomplete (example)",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {"key": "Content-Type", "value": "application/json; charset=utf-8"}
+              ],
+              "body": "{\n  \"status\": \"incomplete\",\n  \"summary\": {\n    \"total_sheets\": 23,\n    \"sheets_ok\": 18,\n    \"sheets_incomplete\": 5,\n    \"total_test_cases\": 187,\n    \"test_cases_ok\": 160,\n    \"test_cases_incomplete\": 27\n  },\n  \"sheets\": [\n    {\n      \"sheet_name\": \"Interbank Transfer\",\n      \"metadata\": {\n        \"provider_name\": { \"value\": \"PT Bank XYZ\", \"status\": \"ok\" },\n        \"partner_name\":  { \"value\": \"\",            \"status\": \"missing\" },\n        \"test_date\":     { \"value\": \"2025-03-01\",  \"status\": \"ok\" }\n      },\n      \"summary\": { \"total\": 13, \"ok\": 10, \"incomplete\": 3 },\n      \"test_cases\": [\n        {\n          \"no\": \"8.1\",\n          \"service\": \"Any Service\",\n          \"scenario\": \"Access Token Invalid\",\n          \"status\": \"incomplete\",\n          \"issues\": [\n            \"Request belum diisi (harus berupa curl: URL Endpoint, Header Request, Request Body)\",\n            \"Response Body belum diisi\"\n          ]\n        },\n        {\n          \"no\": \"8.2\",\n          \"service\": \"Any Service\",\n          \"scenario\": \"Unauthorized . Signature\",\n          \"status\": \"ok\",\n          \"issues\": []\n        }\n      ]\n    }\n  ]\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has status field', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.be.oneOf(['ok', 'incomplete']);",
+                  "});",
+                  "",
+                  "pm.test('Response has summary object', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.summary).to.be.an('object');",
+                  "    pm.expect(json.summary.total_sheets).to.be.a('number');",
+                  "    pm.expect(json.summary.total_test_cases).to.be.a('number');",
+                  "});",
+                  "",
+                  "pm.test('Response has sheets array', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.sheets).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Each sheet has required fields', function () {",
+                  "    var json = pm.response.json();",
+                  "    json.sheets.forEach(function(sheet) {",
+                  "        pm.expect(sheet.sheet_name).to.be.a('string');",
+                  "        pm.expect(sheet.metadata).to.be.an('object');",
+                  "        pm.expect(sheet.summary).to.be.an('object');",
+                  "        pm.expect(sheet.test_cases).to.be.an('array');",
+                  "    });",
+                  "});",
+                  "",
+                  "// Store overall status for use in subsequent requests",
+                  "pm.environment.set('last_validation_status', pm.response.json().status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validate — Filter Specific Sheets (JSON)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "postman-{{$randomUUID}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}",
+                  "description": "The SIT Excel file (.xlsx)."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate?sheets={{sheet_filter}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"],
+              "query": [
+                {
+                  "key": "sheets",
+                  "value": "{{sheet_filter}}",
+                  "description": "Comma-separated sheet names to validate. Set sheet_filter in the environment (e.g. 'Interbank Transfer,QR MPM')."
+                }
+              ]
+            },
+            "description": "Validates only the sheets listed in the `sheets` query parameter.\n\nUseful when a partner has only completed certain product sheets and wants targeted feedback."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Only requested sheets are in the response', function () {",
+                  "    var filter = pm.environment.get('sheet_filter');",
+                  "    if (!filter) return; // skip if no filter set",
+                  "    var requested = filter.split(',').map(function(s) { return s.trim(); });",
+                  "    var json = pm.response.json();",
+                  "    json.sheets.forEach(function(sheet) {",
+                  "        pm.expect(requested).to.include(sheet.sheet_name);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 — Validate (Excel response)",
+      "description": "Upload a SIT Excel file and download an annotated workbook with a Validation Result column added per sheet.",
+      "item": [
+        {
+          "name": "Validate — Download Annotated Excel",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "postman-{{$randomUUID}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}",
+                  "description": "The SIT Excel file (.xlsx)."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate?format=excel",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "excel",
+                  "description": "Return an annotated .xlsx file instead of JSON."
+                }
+              ]
+            },
+            "description": "Returns an annotated `.xlsx` file.\n\nFor each product sheet the service appends a **Validation Result** column (column I):\n- ✓ OK rows are highlighted **green**\n- Rows with issues show the issue text joined by ` | ` and are highlighted **red**\n- Missing metadata cells are highlighted **red**\n\nIn Postman, click **Save Response → Save to a file** to download the annotated workbook."
+          },
+          "response": [
+            {
+              "name": "200 — Annotated xlsx",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {"key": "Content-Type", "value": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+                {"key": "Content-Disposition", "value": "attachment; filename=\"sit_validation_report.xlsx\""}
+              ],
+              "body": "",
+              "_postman_previewlanguage": "text"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is xlsx', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type'))",
+                  "        .to.include('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');",
+                  "});",
+                  "",
+                  "pm.test('Content-Disposition is attachment', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Disposition'))",
+                  "        .to.include('attachment');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Validate — Filter Sheets + Excel Output",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate?format=excel&sheets={{sheet_filter}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"],
+              "query": [
+                {"key": "format", "value": "excel"},
+                {"key": "sheets", "value": "{{sheet_filter}}"}
+              ]
+            },
+            "description": "Combines sheet filtering with Excel output. Only the specified sheets are validated and annotated in the returned workbook."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Content-Type is xlsx', function () {",
+                  "    pm.expect(pm.response.headers.get('Content-Type'))",
+                  "        .to.include('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 — Error Cases",
+      "description": "Requests that exercise the documented error responses. Use these to verify the service correctly rejects bad input.",
+      "item": [
+        {
+          "name": "Error — No File Uploaded (400)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"]
+            },
+            "description": "Sends a multipart request with no `file` field.\n\nExpected: `400 Bad Request` with `{\"error\": \"file is required\"}`"
+          },
+          "response": [
+            {
+              "name": "400 — file is required",
+              "status": "Bad Request",
+              "code": 400,
+              "header": [{"key": "Content-Type", "value": "application/json; charset=utf-8"}],
+              "body": "{\"error\": \"file is required\"}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Error message is file is required', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.error).to.eql('file is required');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Error — Wrong File Extension (400)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "value": "this is not an xlsx",
+                  "type": "text",
+                  "description": "Sending a text value with a .csv filename to trigger the extension check."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"]
+            },
+            "description": "Uploads a file with a non-.xlsx extension.\n\nExpected: `400 Bad Request` with `{\"error\": \"invalid file format: expected .xlsx\"}`\n\n**Note:** Set the filename in Postman's form-data to `report.csv` to trigger this error — click the file field, choose a `.csv` file, or use the raw text workaround above."
+          },
+          "response": [
+            {
+              "name": "400 — invalid file format",
+              "status": "Bad Request",
+              "code": 400,
+              "header": [{"key": "Content-Type", "value": "application/json; charset=utf-8"}],
+              "body": "{\"error\": \"invalid file format: expected .xlsx\"}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "",
+                  "pm.test('Error mentions expected .xlsx', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.error).to.include('.xlsx');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Error — Corrupt / Non-xlsx File (422)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}",
+                  "description": "Replace this with any non-xlsx file renamed to .xlsx to trigger a parse error."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"]
+            },
+            "description": "Uploads a file with a `.xlsx` extension whose content is not a valid Excel workbook.\n\nExpected: `422 Unprocessable Entity` with `{\"error\": \"cannot parse excel file: ...\"}`\n\n**How to test:** rename any `.txt` or `.jpg` file to `.xlsx` and upload it."
+          },
+          "response": [
+            {
+              "name": "422 — cannot parse excel file",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [{"key": "Content-Type", "value": "application/json; charset=utf-8"}],
+              "body": "{\"error\": \"cannot parse excel file: zip: not a valid zip file\"}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('Error mentions cannot parse', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.error).to.include('cannot parse excel file');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Error — No Recognizable Product Sheets (422)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate?sheets=NonExistentSheet",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"],
+              "query": [
+                {
+                  "key": "sheets",
+                  "value": "NonExistentSheet",
+                  "description": "A sheet name that does not exist in the workbook forces the 422 response."
+                }
+              ]
+            },
+            "description": "Requests validation of a sheet that does not exist in the workbook.\n\nExpected: `422 Unprocessable Entity` with `{\"error\": \"no recognizable product sheets found\"}`"
+          },
+          "response": [
+            {
+              "name": "422 — no recognizable product sheets found",
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "header": [{"key": "Content-Type", "value": "application/json; charset=utf-8"}],
+              "body": "{\"error\": \"no recognizable product sheets found\"}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 422', function () {",
+                  "    pm.response.to.have.status(422);",
+                  "});",
+                  "",
+                  "pm.test('Error mentions no recognizable product sheets', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.error).to.include('no recognizable product sheets found');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Error — File Too Large (413)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}",
+                  "description": "Upload a file larger than the configured max_upload_size_mb (default 20 MB) to trigger this error."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"]
+            },
+            "description": "Uploads a file that exceeds the configured `max_upload_size_mb` limit (default 20 MB).\n\nExpected: `413 Request Entity Too Large` with `{\"error\": \"file too large, max 20MB\"}`\n\n**How to test:** Upload any file larger than 20 MB renamed to `.xlsx`."
+          },
+          "response": [
+            {
+              "name": "413 — file too large",
+              "status": "Request Entity Too Large",
+              "code": 413,
+              "header": [{"key": "Content-Type", "value": "application/json; charset=utf-8"}],
+              "body": "{\"error\": \"file too large, max 20MB\"}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 413', function () {",
+                  "    pm.response.to.have.status(413);",
+                  "});",
+                  "",
+                  "pm.test('Error mentions file too large', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.error).to.include('file too large');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
