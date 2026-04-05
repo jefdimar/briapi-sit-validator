@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jefdimar/briapi-sit-validator/internal/config"
+	"github.com/jefdimar/briapi-sit-validator/internal/gdrive"
 )
 
 const version = "1.0.0"
@@ -32,7 +33,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := setupRouter(cfg)
+	driveClient, driveConfigured := gdrive.NewClientFromEnv()
+	if driveConfigured {
+		slog.Info("google drive integration enabled")
+	}
+
+	router := setupRouter(cfg, driveClient)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Server.Port),
