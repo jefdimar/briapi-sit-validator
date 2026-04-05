@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,23 @@ const version = "1.0.0"
 // loadDotEnv reads a .env file and sets any key=value pairs as environment
 // variables, skipping blank lines and comments.  Existing OS env vars always
 // take precedence so that CI/CD secrets are never overridden.
+// dotEnvCandidates returns a prioritised list of paths to look for a .env file.
+// This covers: running from the project root, running a binary from bin/, and
+// running via `go run ./cmd/server` where the binary lands in a temp dir.
+func dotEnvCandidates() []string {
+	candidates := []string{".env"} // cwd — works for `go run` from project root
+
+	// Walk up from the executable's location (covers bin/sit-validator → root).
+	if exe, err := os.Executable(); err == nil {
+		dir := filepath.Dir(exe)
+		for range 4 { // up to 4 levels up
+			candidates = append(candidates, filepath.Join(dir, ".env"))
+			dir = filepath.Dir(dir)
+		}
+	}
+	return candidates
+}
+
 func loadDotEnv(path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -56,7 +74,15 @@ func loadDotEnv(path string) {
 }
 
 func main() {
-	loadDotEnv(".env")
+	// Try loading .env from several candidate locations so the server works
+	// regardless of whether it is started via `go run ./cmd/server` (cwd is
+	// the module root), a built binary in bin/, or any other working directory.
+	for _, p := range dotEnvCandidates() {
+		if _, err := os.Stat(p); err == nil {
+			loadDotEnv(p)
+			break
+		}
+	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
