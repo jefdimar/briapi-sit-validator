@@ -29,17 +29,57 @@ curl -F "file=@your_sit_file.xlsx" \
 
 ## API
 
+### Recommended Workflow
+
+1. **POST /api/v1/sheets** — upload the file, get back the list of available sheet names.
+2. Choose which sheets to validate.
+3. **POST /api/v1/validate** — upload the file with a `sheets` form field containing the chosen names.
+
+---
+
+### `GET /api/v1/health`
+
+Returns service health and version.
+
+---
+
+### `POST /api/v1/sheets`
+
+Upload a `.xlsx` file and receive the list of product sheet names in the workbook (administrative sheets like *Changelog* and *Daftar Isi* are excluded).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `file` | multipart/form-data | Required. `.xlsx` file |
+
+**Response:**
+```json
+{ "sheets": ["Interbank Transfer", "QR MPM", "Virtual Account"] }
+```
+
+---
+
 ### `POST /api/v1/validate`
 
 | Parameter | Type | Description |
 |---|---|---|
 | `file` | multipart/form-data | Required. `.xlsx` file to validate |
+| `sheets` | form field **or** query string | Comma-separated sheet names to validate. Form field takes precedence over query string. Omit to validate all sheets. |
 | `format` | query string | `json` (default) or `excel` |
-| `sheets` | query string | Comma-separated sheet names to validate |
 
-### `GET /api/v1/health`
+**Example — choose sheets via form field:**
+```bash
+curl -F "file=@sit_file.xlsx" \
+     -F "sheets=Interbank Transfer,QR MPM" \
+     http://localhost:8080/api/v1/validate
+```
 
-Returns service health and version.
+**Example — get an annotated Excel report for specific sheets:**
+```bash
+curl -F "file=@sit_file.xlsx" \
+     -F "sheets=Interbank Transfer" \
+     "http://localhost:8080/api/v1/validate?format=excel" \
+     -o report.xlsx
+```
 
 ## Configuration
 
@@ -77,9 +117,12 @@ A ready-to-use Postman collection and environment are included in the `postman/`
 | Folder | Requests |
 |---|---|
 | 01 - Health | `GET /api/v1/health` — verify the service is up |
-| 02 - Validate (JSON) | Validate all sheets · Validate with sheet filter |
-| 03 - Validate (Excel) | Download annotated Excel report · Download with sheet filter |
-| 04 - Error Cases | Missing file · Invalid file type · File too large (synthetic) |
+| 02 - Discover Sheets | `POST /api/v1/sheets` — list available sheet names; auto-populates `sheet_filter` env var |
+| 03 - Validate (JSON) | Validate all sheets · Choose sheets via form field · Choose sheets via query string |
+| 04 - Validate (Excel) | Download annotated Excel report · Choose sheets + Excel output |
+| 05 - Error Cases | Missing file · Invalid file type · No matching sheets · File too large |
+
+**Tip:** Run **02 - Discover Sheets** first. The test script automatically sets `sheet_filter` to the first available sheet name, so the subsequent validate requests work without manual configuration.
 
 ### Environment Variables
 

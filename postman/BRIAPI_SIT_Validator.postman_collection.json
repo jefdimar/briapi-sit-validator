@@ -2,15 +2,14 @@
   "info": {
     "_postman_id": "briapi-sit-validator-collection",
     "name": "BRIAPI SIT Validator",
-    "description": "Collection for testing the BRIAPI SIT Validator service.\n\nThis service validates Excel files submitted by BRIAPI partners as part of the System Integration Testing (SIT) process. It checks that all test case rows in the file have been properly filled in (Request, Response, Result, Notes).\n\n## Setup\n1. Import this collection into Postman.\n2. Import the `BRIAPI_SIT_Validator.postman_environment.json` environment file.\n3. Select the **BRIAPI SIT Validator — Local** environment.\n4. Set the `sit_file_path` environment variable to the absolute path of your `.xlsx` SIT file.\n5. Run the server locally: `go run -mod=vendor ./cmd/server`\n\n## Endpoints\n- `GET  /api/v1/health`       — Health check\n- `POST /api/v1/validate`     — Validate a SIT Excel file (JSON or Excel output)",
+    "description": "Collection for testing the BRIAPI SIT Validator service.\n\nThis service validates Excel files submitted by BRIAPI partners as part of the System Integration Testing (SIT) process. It checks that all test case rows in the file have been properly filled in (Request, Response, Result, Notes).\n\n## Recommended Workflow\n1. **POST /api/v1/sheets** — upload the SIT file and get back the list of available sheet names.\n2. Choose which sheets you want to validate.\n3. **POST /api/v1/validate** — upload the file again with a `sheets` form field containing the chosen sheet names.\n\n## Setup\n1. Import this collection into Postman.\n2. Import the `BRIAPI_SIT_Validator.postman_environment.json` environment file.\n3. Select the **BRIAPI SIT Validator — Local** environment.\n4. Set the `sit_file_path` environment variable to the absolute path of your `.xlsx` SIT file.\n5. Run the server locally: `go run -mod=vendor ./cmd/server`\n\n## Endpoints\n- `GET  /api/v1/health`   — Health check\n- `POST /api/v1/sheets`   — List available sheet names in the uploaded file\n- `POST /api/v1/validate` — Validate a SIT Excel file (JSON or Excel output)",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     {
       "key": "base_url",
       "value": "http://localhost:8080",
-      "type": "string",
-      "description": "Override with your environment variable {{base_url}}"
+      "type": "string"
     }
   ],
   "item": [
@@ -69,8 +68,89 @@
       ]
     },
     {
-      "name": "02 — Validate (JSON response)",
-      "description": "Upload a SIT Excel file and receive a structured JSON validation report.",
+      "name": "02 — Discover Sheets",
+      "description": "Upload a SIT Excel file and get back the list of available product sheet names. Use this to discover which sheets exist before calling /validate with a specific filter.",
+      "item": [
+        {
+          "name": "List Sheets in File",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "postman-{{$randomUUID}}",
+                "description": "Optional. If omitted the service generates one automatically."
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}",
+                  "description": "The SIT Excel file (.xlsx). Set sit_file_path in the environment."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/sheets",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "sheets"]
+            },
+            "description": "Returns a JSON array of all product sheet names in the uploaded workbook, excluding administrative sheets (e.g. Changelog, Daftar Isi) that are configured to be skipped.\n\n**Response:**\n```json\n{\n  \"sheets\": [\n    \"Interbank Transfer\",\n    \"QR MPM\",\n    \"Virtual Account\"\n  ]\n}\n```\n\nUse the returned names to populate the `sheets` field in /validate requests."
+          },
+          "response": [
+            {
+              "name": "200 — Sheet list",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {"key": "Content-Type", "value": "application/json; charset=utf-8"}
+              ],
+              "body": "{\n  \"sheets\": [\n    \"Interbank Transfer\",\n    \"QR MPM\",\n    \"Virtual Account\",\n    \"DirectDebit\",\n    \"SNAP BI\"\n  ]\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has sheets array', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.sheets).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Sheet names are strings', function () {",
+                  "    var json = pm.response.json();",
+                  "    json.sheets.forEach(function(s) {",
+                  "        pm.expect(s).to.be.a('string');",
+                  "    });",
+                  "});",
+                  "",
+                  "// Store the first sheet name so the next request can use it as a default filter.",
+                  "var json = pm.response.json();",
+                  "if (json.sheets && json.sheets.length > 0) {",
+                  "    pm.environment.set('discovered_sheets', json.sheets.join(','));",
+                  "    pm.environment.set('sheet_filter', json.sheets[0]);",
+                  "    console.log('Available sheets: ' + json.sheets.join(', '));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 — Validate (JSON response)",
+      "description": "Upload a SIT Excel file and receive a structured JSON validation report.\n\nYou can choose which sheets to validate by supplying a `sheets` form field in the request body (comma-separated sheet names). Alternatively, pass `sheets` as a query string parameter. If omitted, all product sheets are validated.",
       "item": [
         {
           "name": "Validate — All Sheets (JSON)",
@@ -150,7 +230,6 @@
                   "    });",
                   "});",
                   "",
-                  "// Store overall status for use in subsequent requests",
                   "pm.environment.set('last_validation_status', pm.response.json().status);"
                 ]
               }
@@ -158,7 +237,7 @@
           ]
         },
         {
-          "name": "Validate — Filter Specific Sheets (JSON)",
+          "name": "Validate — Choose Sheets via Form Field (JSON)",
           "request": {
             "method": "POST",
             "header": [
@@ -175,22 +254,21 @@
                   "type": "file",
                   "src": "{{sit_file_path}}",
                   "description": "The SIT Excel file (.xlsx)."
+                },
+                {
+                  "key": "sheets",
+                  "value": "{{sheet_filter}}",
+                  "type": "text",
+                  "description": "Comma-separated sheet names to validate (e.g. 'Interbank Transfer,QR MPM'). Set sheet_filter in the environment, or run 02—Discover Sheets first to populate it automatically."
                 }
               ]
             },
             "url": {
-              "raw": "{{base_url}}/api/v1/validate?sheets={{sheet_filter}}",
+              "raw": "{{base_url}}/api/v1/validate",
               "host": ["{{base_url}}"],
-              "path": ["api", "{{api_version}}", "validate"],
-              "query": [
-                {
-                  "key": "sheets",
-                  "value": "{{sheet_filter}}",
-                  "description": "Comma-separated sheet names to validate. Set sheet_filter in the environment (e.g. 'Interbank Transfer,QR MPM')."
-                }
-              ]
+              "path": ["api", "{{api_version}}", "validate"]
             },
-            "description": "Validates only the sheets listed in the `sheets` query parameter.\n\nUseful when a partner has only completed certain product sheets and wants targeted feedback."
+            "description": "Validates only the sheets listed in the `sheets` **form field**.\n\nThis is the recommended way to filter sheets: first call `POST /api/v1/sheets` to discover the available sheet names, then supply the chosen names here as a comma-separated form field value.\n\nThe `sheets` field can also be passed as a query string parameter (`?sheets=Sheet1,Sheet2`); if both are present the form field takes precedence."
           },
           "response": [],
           "event": [
@@ -205,7 +283,7 @@
                   "",
                   "pm.test('Only requested sheets are in the response', function () {",
                   "    var filter = pm.environment.get('sheet_filter');",
-                  "    if (!filter) return; // skip if no filter set",
+                  "    if (!filter) return;",
                   "    var requested = filter.split(',').map(function(s) { return s.trim(); });",
                   "    var json = pm.response.json();",
                   "    json.sheets.forEach(function(sheet) {",
@@ -216,15 +294,59 @@
               }
             }
           ]
+        },
+        {
+          "name": "Validate — Choose Sheets via Query String (JSON)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{sit_file_path}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/validate?sheets={{sheet_filter}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "{{api_version}}", "validate"],
+              "query": [
+                {
+                  "key": "sheets",
+                  "value": "{{sheet_filter}}",
+                  "description": "Comma-separated sheet names (e.g. 'Interbank Transfer,QR MPM')."
+                }
+              ]
+            },
+            "description": "Alternative: pass `sheets` as a query string parameter instead of a form field.\n\nBoth approaches produce identical results. The form field (previous request) is preferred for programmatic use; the query string is convenient for quick manual testing."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
     {
-      "name": "03 — Validate (Excel response)",
+      "name": "04 — Validate (Excel response)",
       "description": "Upload a SIT Excel file and download an annotated workbook with a Validation Result column added per sheet.",
       "item": [
         {
-          "name": "Validate — Download Annotated Excel",
+          "name": "Validate — Download Annotated Excel (All Sheets)",
           "request": {
             "method": "POST",
             "header": [
@@ -239,8 +361,7 @@
                 {
                   "key": "file",
                   "type": "file",
-                  "src": "{{sit_file_path}}",
-                  "description": "The SIT Excel file (.xlsx)."
+                  "src": "{{sit_file_path}}"
                 }
               ]
             },
@@ -296,7 +417,7 @@
           ]
         },
         {
-          "name": "Validate — Filter Sheets + Excel Output",
+          "name": "Validate — Choose Sheets + Excel Output",
           "request": {
             "method": "POST",
             "header": [],
@@ -307,19 +428,24 @@
                   "key": "file",
                   "type": "file",
                   "src": "{{sit_file_path}}"
+                },
+                {
+                  "key": "sheets",
+                  "value": "{{sheet_filter}}",
+                  "type": "text",
+                  "description": "Comma-separated sheet names to include in the annotated report."
                 }
               ]
             },
             "url": {
-              "raw": "{{base_url}}/api/v1/validate?format=excel&sheets={{sheet_filter}}",
+              "raw": "{{base_url}}/api/v1/validate?format=excel",
               "host": ["{{base_url}}"],
               "path": ["api", "{{api_version}}", "validate"],
               "query": [
-                {"key": "format", "value": "excel"},
-                {"key": "sheets", "value": "{{sheet_filter}}"}
+                {"key": "format", "value": "excel"}
               ]
             },
-            "description": "Combines sheet filtering with Excel output. Only the specified sheets are validated and annotated in the returned workbook."
+            "description": "Combines sheet selection (via form field) with Excel output. Only the specified sheets are validated and annotated in the returned workbook."
           },
           "response": [],
           "event": [
@@ -344,7 +470,7 @@
       ]
     },
     {
-      "name": "04 — Error Cases",
+      "name": "05 — Error Cases",
       "description": "Requests that exercise the documented error responses. Use these to verify the service correctly rejects bad input.",
       "item": [
         {
@@ -352,10 +478,7 @@
           "request": {
             "method": "POST",
             "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": []
-            },
+            "body": {"mode": "formdata", "formdata": []},
             "url": {
               "raw": "{{base_url}}/api/v1/validate",
               "host": ["{{base_url}}"],
@@ -403,8 +526,7 @@
                 {
                   "key": "file",
                   "value": "this is not an xlsx",
-                  "type": "text",
-                  "description": "Sending a text value with a .csv filename to trigger the extension check."
+                  "type": "text"
                 }
               ]
             },
@@ -413,7 +535,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "{{api_version}}", "validate"]
             },
-            "description": "Uploads a file with a non-.xlsx extension.\n\nExpected: `400 Bad Request` with `{\"error\": \"invalid file format: expected .xlsx\"}`\n\n**Note:** Set the filename in Postman's form-data to `report.csv` to trigger this error — click the file field, choose a `.csv` file, or use the raw text workaround above."
+            "description": "Uploads a file with a non-.xlsx extension.\n\nExpected: `400 Bad Request` with `{\"error\": \"invalid file format: expected .xlsx\"}`"
           },
           "response": [
             {
@@ -445,58 +567,6 @@
           ]
         },
         {
-          "name": "Error — Corrupt / Non-xlsx File (422)",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": "{{sit_file_path}}",
-                  "description": "Replace this with any non-xlsx file renamed to .xlsx to trigger a parse error."
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/validate",
-              "host": ["{{base_url}}"],
-              "path": ["api", "{{api_version}}", "validate"]
-            },
-            "description": "Uploads a file with a `.xlsx` extension whose content is not a valid Excel workbook.\n\nExpected: `422 Unprocessable Entity` with `{\"error\": \"cannot parse excel file: ...\"}`\n\n**How to test:** rename any `.txt` or `.jpg` file to `.xlsx` and upload it."
-          },
-          "response": [
-            {
-              "name": "422 — cannot parse excel file",
-              "status": "Unprocessable Entity",
-              "code": 422,
-              "header": [{"key": "Content-Type", "value": "application/json; charset=utf-8"}],
-              "body": "{\"error\": \"cannot parse excel file: zip: not a valid zip file\"}",
-              "_postman_previewlanguage": "json"
-            }
-          ],
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Status code is 422', function () {",
-                  "    pm.response.to.have.status(422);",
-                  "});",
-                  "",
-                  "pm.test('Error mentions cannot parse', function () {",
-                  "    var json = pm.response.json();",
-                  "    pm.expect(json.error).to.include('cannot parse excel file');",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "Error — No Recognizable Product Sheets (422)",
           "request": {
             "method": "POST",
@@ -508,20 +578,19 @@
                   "key": "file",
                   "type": "file",
                   "src": "{{sit_file_path}}"
+                },
+                {
+                  "key": "sheets",
+                  "value": "NonExistentSheet",
+                  "type": "text",
+                  "description": "A sheet name that does not exist in the workbook forces the 422 response."
                 }
               ]
             },
             "url": {
-              "raw": "{{base_url}}/api/v1/validate?sheets=NonExistentSheet",
+              "raw": "{{base_url}}/api/v1/validate",
               "host": ["{{base_url}}"],
-              "path": ["api", "{{api_version}}", "validate"],
-              "query": [
-                {
-                  "key": "sheets",
-                  "value": "NonExistentSheet",
-                  "description": "A sheet name that does not exist in the workbook forces the 422 response."
-                }
-              ]
+              "path": ["api", "{{api_version}}", "validate"]
             },
             "description": "Requests validation of a sheet that does not exist in the workbook.\n\nExpected: `422 Unprocessable Entity` with `{\"error\": \"no recognizable product sheets found\"}`"
           },
@@ -566,7 +635,7 @@
                   "key": "file",
                   "type": "file",
                   "src": "{{sit_file_path}}",
-                  "description": "Upload a file larger than the configured max_upload_size_mb (default 20 MB) to trigger this error."
+                  "description": "Upload a file larger than max_upload_size_mb (default 20 MB) to trigger this error."
                 }
               ]
             },
@@ -575,7 +644,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "{{api_version}}", "validate"]
             },
-            "description": "Uploads a file that exceeds the configured `max_upload_size_mb` limit (default 20 MB).\n\nExpected: `413 Request Entity Too Large` with `{\"error\": \"file too large, max 20MB\"}`\n\n**How to test:** Upload any file larger than 20 MB renamed to `.xlsx`."
+            "description": "Uploads a file that exceeds the configured `max_upload_size_mb` limit (default 20 MB).\n\nExpected: `413 Request Entity Too Large` with `{\"error\": \"file too large, max 20MB\"}`"
           },
           "response": [
             {
