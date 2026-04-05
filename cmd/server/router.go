@@ -28,6 +28,45 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
 	})
 
+	router.POST("/api/v1/sheets", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+
+		fh, err := c.FormFile("file")
+		if err != nil {
+			if errors.As(err, new(*http.MaxBytesError)) {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("file too large, max %dMB", cfg.Server.MaxUploadSizeMB)})
+				return
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+			return
+		}
+
+		if strings.ToLower(filepath.Ext(fh.Filename)) != ".xlsx" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file format: expected .xlsx"})
+			return
+		}
+
+		p, err := parser.Open(fh)
+		if err != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("cannot parse excel file: %s", err.Error())})
+			return
+		}
+		defer p.Close()
+
+		skipSet := makeSkipSet(cfg.Excel.SkipSheets)
+		var productSheets []string
+		for _, s := range p.SheetNames() {
+			if !skipSet[s] {
+				productSheets = append(productSheets, s)
+			}
+		}
+		if productSheets == nil {
+			productSheets = []string{}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"sheets": productSheets})
+	})
+
 	router.POST("/api/v1/validate", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 
@@ -56,12 +95,16 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 		requestID, _ := c.Get("request_id")
 		reqID := fmt.Sprintf("%v", requestID)
 
+		// sheets can be supplied as a form field (body) or query string.
+		// Form field takes precedence; query string is the fallback.
+		sheetsRaw := c.PostForm("sheets")
+		if sheetsRaw == "" {
+			sheetsRaw = c.Query("sheets")
+		}
 		var filterSheets []string
-		if raw := c.Query("sheets"); raw != "" {
-			for _, s := range strings.Split(raw, ",") {
-				if t := strings.TrimSpace(s); t != "" {
-					filterSheets = append(filterSheets, t)
-				}
+		for _, s := range strings.Split(sheetsRaw, ",") {
+			if t := strings.TrimSpace(s); t != "" {
+				filterSheets = append(filterSheets, t)
 			}
 		}
 
@@ -89,4 +132,12 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 	})
 
 	return router
+}
+
+func makeSkipSet(ss []string) map[string]bool {
+	m := make(map[string]bool, len(ss))
+	for _, s := range ss {
+		m[s] = true
+	}
+	return m
 }

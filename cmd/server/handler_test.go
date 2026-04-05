@@ -316,6 +316,94 @@ func TestValidate_ExcelFormat_ContainsAnnotations(t *testing.T) {
 	assert.Equal(t, "✓ OK", val)
 }
 
+// --- POST /api/v1/sheets ---------------------------------------------------
+
+func TestSheets_NoFile_Returns400(t *testing.T) {
+	router := setupRouter(testCfg())
+	w := perform(router, "POST", "/api/v1/sheets", nil, "")
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "file is required")
+}
+
+func TestSheets_NonXlsxExtension_Returns400(t *testing.T) {
+	router := setupRouter(testCfg())
+	body, ct := multipartBody(t, "file", "report.csv", []byte("not xlsx"))
+
+	w := perform(router, "POST", "/api/v1/sheets", body, ct)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "invalid file format: expected .xlsx")
+}
+
+func TestSheets_CorruptXlsx_Returns422(t *testing.T) {
+	router := setupRouter(testCfg())
+	body, ct := multipartBody(t, "file", "broken.xlsx", []byte("not valid"))
+
+	w := perform(router, "POST", "/api/v1/sheets", body, ct)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestSheets_ValidFile_ReturnsSheetList(t *testing.T) {
+	router := setupRouter(testCfg())
+	// sitXlsx has "Sheet1" (default) and "ProductA"
+	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
+		f.NewSheet("ProductA")
+		f.NewSheet("ProductB")
+		f.NewSheet("Changelog") // in skip_sheets — must be excluded
+	})
+	body, ct := multipartBody(t, "file", "sit.xlsx", xlsxData)
+
+	w := perform(router, "POST", "/api/v1/sheets", body, ct)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string][]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	sheets := resp["sheets"]
+	assert.Contains(t, sheets, "ProductA")
+	assert.Contains(t, sheets, "ProductB")
+	assert.NotContains(t, sheets, "Changelog")
+}
+
+// --- POST /api/v1/validate — sheets as form field --------------------------
+
+func TestValidate_SheetFilterFormField(t *testing.T) {
+	router := setupRouter(testCfg())
+	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
+		for _, sheet := range []string{"ProductA", "ProductB"} {
+			f.NewSheet(sheet)
+			f.SetCellValue(sheet, "C3", "Bank")
+			f.SetCellValue(sheet, "C5", "Partner")
+			f.SetCellValue(sheet, "C6", "2025-01-01")
+			vals := []interface{}{"1.1", "Svc", "Scenario", "200 OK", "curl ...", `{}`, "Passed", ""}
+			cols := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+			for i, col := range cols {
+				f.SetCellValue(sheet, col+"10", vals[i])
+			}
+		}
+	})
+
+	// Pass sheets as a form field, not a query string.
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	fw, err := w.CreateFormFile("file", "sit.xlsx")
+	require.NoError(t, err)
+	_, err = fw.Write(xlsxData)
+	require.NoError(t, err)
+	require.NoError(t, w.WriteField("sheets", "ProductA"))
+	require.NoError(t, w.Close())
+
+	resp := perform(router, "POST", "/api/v1/validate", &body, w.FormDataContentType())
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var report model.ValidationReport
+	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &report))
+	require.Len(t, report.Sheets, 1)
+	assert.Equal(t, "ProductA", report.Sheets[0].SheetName)
+}
+
 // --- request logger middleware ---------------------------------------------
 
 func TestRequestLogger_SetsRequestID(t *testing.T) {
