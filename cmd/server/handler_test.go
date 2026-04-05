@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -41,26 +42,27 @@ func testCfg() *config.Config {
 			},
 		},
 		Validation: config.ValidationConfig{
-			Request: config.FieldValidation{
-				Required:            true,
-				EmptySentinelValues: []string{""},
-				ErrorMessage:        "Request belum diisi",
+			Request: config.RequestValidation{
+				Required:                   true,
+				EmptySentinelValues:        []string{""},
+				ErrorMessage:               "Request belum diisi",
+				RequiredHeaders:            []string{"URL", "Content-Type", "Authorization", "X-SIGNATURE", "X-TIMESTAMP", "X-EXTERNAL-ID", "X-PARTNER-ID"},
+				RequiredHeaderErrorMessage: "Header wajib tidak ditemukan di Request: %s",
+				UniqueHeaders:              []string{"X-SIGNATURE", "X-TIMESTAMP"},
+				UniqueHeaderErrorMessage:   "Nilai %s harus unik",
 			},
-			Response: config.FieldValidation{
+			Response: config.ResponseValidation{
 				Required:            true,
 				EmptySentinelValues: []string{""},
 				ErrorMessage:        "Response Body belum diisi",
+				MatchExpectedResult: true,
+				MatchErrorMessage:   "Response tidak sesuai dengan Expected Result",
+				SuccessKeyword:      "Successful",
+				SuccessMustContain:  "responseMessage",
+				SuccessErrorMessage: "responseMessage wajib ada di Response",
 			},
-			Result: config.ResultValidation{
-				Required:            true,
-				AllowedValues:       []string{"Passed", "Not Passed", "passed", "not passed"},
-				ErrorMessage:        "Result belum diisi",
-				InvalidValueMessage: "Result tidak valid",
-			},
-			Notes: config.NotesValidation{
-				RequiredIfResult: "not passed",
-				ErrorMessage:     "Notes wajib diisi",
-			},
+			Result: config.ResultValidation{Required: false},
+			Notes:  config.NotesValidation{},
 		},
 	}
 }
@@ -90,19 +92,44 @@ func multipartBody(t *testing.T, fieldName, filename string, content []byte) (io
 	return &body, w.FormDataContentType()
 }
 
+// handlerRequest returns a fully-valid request string with unique signature/timestamp.
+func handlerRequest(rowID string) string {
+	return "URL: https://api.bri.co.id/v2/transfer\n" +
+		"Content-Type: application/json\n" +
+		"Authorization: Bearer token123\n" +
+		"X-SIGNATURE: sig-" + rowID + "\n" +
+		"X-TIMESTAMP: 2025-01-01T10:00:00+07:00-" + rowID + "\n" +
+		"X-EXTERNAL-ID: ext-" + rowID + "\n" +
+		"X-PARTNER-ID: partner-001"
+}
+
+// writeRow writes a fully-valid test case row at the given 1-indexed row in sheet.
+func writeRow(f *excelize.File, sheet string, row int, no string) {
+	vals := []interface{}{
+		no, "Service", "Scenario", "Successful",
+		handlerRequest(no),
+		`{"responseCode":"2001600","responseMessage":"Successful"}`,
+		"Passed", "",
+	}
+	colLetters := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+	for i, col := range colLetters {
+		f.SetCellValue(sheet, col+fmt.Sprint(row), vals[i])
+	}
+}
+
+// setSheetMeta writes provider/partner/date into column C (the value column).
+func setSheetMeta(f *excelize.File, sheet string) {
+	f.SetCellValue(sheet, "C3", "PT Bank XYZ")
+	f.SetCellValue(sheet, "C5", "Partner Co.")
+	f.SetCellValue(sheet, "C6", "2025-03-01")
+}
+
 // sitXlsx builds a minimal SIT xlsx with one product sheet containing one OK row.
 func sitXlsx(t *testing.T) []byte {
 	return buildXlsxBytes(t, func(f *excelize.File) {
 		f.NewSheet("ProductA")
-		f.SetCellValue("ProductA", "C3", "PT Bank XYZ")
-		f.SetCellValue("ProductA", "C5", "Partner Co.")
-		f.SetCellValue("ProductA", "C6", "2025-03-01")
-		// test case row 10
-		vals := []interface{}{"1.1", "Service", "Scenario", "200 OK", "curl ...", `{"code":"00"}`, "Passed", ""}
-		cols := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
-		for i, col := range cols {
-			f.SetCellValue("ProductA", col+"10", vals[i])
-		}
+		setSheetMeta(f, "ProductA")
+		writeRow(f, "ProductA", 10, "1.1")
 	})
 }
 
@@ -222,13 +249,11 @@ func TestValidate_IncompleteTestCase_ReportedCorrectly(t *testing.T) {
 
 	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
 		f.NewSheet("ProductA")
-		f.SetCellValue("ProductA", "C3", "Bank")
-		f.SetCellValue("ProductA", "C5", "Partner")
-		f.SetCellValue("ProductA", "C6", "2025-01-01")
-		// Row 10: missing request field
-		vals := []interface{}{"1.1", "Service", "Scenario", "4xx", "", `{"code":"01"}`, "Passed", ""}
-		cols := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
-		for i, col := range cols {
+		setSheetMeta(f, "ProductA")
+		// Row 10: empty request → fails "Request belum diisi"
+		vals := []interface{}{"1.1", "Service", "Scenario", "Successful", "", `{"responseCode":"2001600","responseMessage":"Successful"}`, "Passed", ""}
+		colLetters := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+		for i, col := range colLetters {
 			f.SetCellValue("ProductA", col+"10", vals[i])
 		}
 	})
@@ -253,14 +278,8 @@ func TestValidate_SheetFilterQueryParam(t *testing.T) {
 	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
 		for _, sheet := range []string{"ProductA", "ProductB"} {
 			f.NewSheet(sheet)
-			f.SetCellValue(sheet, "C3", "Bank")
-			f.SetCellValue(sheet, "C5", "Partner")
-			f.SetCellValue(sheet, "C6", "2025-01-01")
-			vals := []interface{}{"1.1", "Svc", "Scenario", "200 OK", "curl ...", `{}`, "Passed", ""}
-			cols := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
-			for i, col := range cols {
-				f.SetCellValue(sheet, col+"10", vals[i])
-			}
+			setSheetMeta(f, sheet)
+			writeRow(f, sheet, 10, "1.1")
 		}
 	})
 
@@ -374,14 +393,8 @@ func TestValidate_SheetFilterFormField(t *testing.T) {
 	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
 		for _, sheet := range []string{"ProductA", "ProductB"} {
 			f.NewSheet(sheet)
-			f.SetCellValue(sheet, "C3", "Bank")
-			f.SetCellValue(sheet, "C5", "Partner")
-			f.SetCellValue(sheet, "C6", "2025-01-01")
-			vals := []interface{}{"1.1", "Svc", "Scenario", "200 OK", "curl ...", `{}`, "Passed", ""}
-			cols := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
-			for i, col := range cols {
-				f.SetCellValue(sheet, col+"10", vals[i])
-			}
+			setSheetMeta(f, sheet)
+			writeRow(f, sheet, 10, "1.1")
 		}
 	})
 

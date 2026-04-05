@@ -37,14 +37,6 @@ validation:
   response:
     required: true
     error_message: "fill response"
-  result:
-    required: true
-    allowed_values: ["Passed", "Not Passed"]
-    error_message: "fill result"
-    invalid_value_message: "result invalid"
-  notes:
-    required_if_result: "not passed"
-    error_message: "fill notes"
 `
 
 func writeYAML(t *testing.T, content string) string {
@@ -68,7 +60,6 @@ func TestLoad_ValidFile(t *testing.T) {
 }
 
 func TestLoad_ServerDefaults(t *testing.T) {
-	// Override only server block; all other required fields come from minimalValidYAML.
 	yaml := `
 server:
   port: 0
@@ -93,14 +84,6 @@ validation:
   response:
     required: true
     error_message: "fill response"
-  result:
-    required: true
-    allowed_values: ["Passed", "Not Passed"]
-    error_message: "fill result"
-    invalid_value_message: "result invalid"
-  notes:
-    required_if_result: "not passed"
-    error_message: "fill notes"
 `
 	cfg, err := Load(writeYAML(t, yaml))
 	require.NoError(t, err)
@@ -147,22 +130,6 @@ validation:
 	assert.Contains(t, err.Error(), "data_start_row")
 }
 
-func TestLoad_EmptyAllowedValues_Fails(t *testing.T) {
-	yaml := `
-excel:
-  header_row: 9
-  data_start_row: 10
-validation:
-  request: {required: true, error_message: "x"}
-  response: {required: true, error_message: "x"}
-  result: {required: true, allowed_values: [], error_message: "x", invalid_value_message: "x"}
-  notes: {error_message: "x"}
-`
-	_, err := Load(writeYAML(t, yaml))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "allowed_values")
-}
-
 func TestLoad_EmptyErrorMessage_Fails(t *testing.T) {
 	yaml := `
 excel:
@@ -171,26 +138,47 @@ excel:
 validation:
   request: {required: true, error_message: ""}
   response: {required: true, error_message: "x"}
-  result: {required: true, allowed_values: ["Passed"], error_message: "x", invalid_value_message: "x"}
-  notes: {error_message: "x"}
 `
 	_, err := Load(writeYAML(t, yaml))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "error_message")
 }
 
-func TestLoad_MissingInvalidValueMessage_Fails(t *testing.T) {
+func TestLoad_RequiredHeadersMissingErrorMessage_Fails(t *testing.T) {
+	// required_headers set but required_header_error_message empty → must fail
 	yaml := `
 excel:
   header_row: 9
   data_start_row: 10
 validation:
-  request: {required: true, error_message: "x"}
+  request:
+    required: true
+    error_message: "fill request"
+    required_headers: ["URL"]
+    required_header_error_message: ""
   response: {required: true, error_message: "x"}
-  result: {required: true, allowed_values: ["Passed"], error_message: "x", invalid_value_message: ""}
-  notes: {error_message: "x"}
 `
 	_, err := Load(writeYAML(t, yaml))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid_value_message")
+	assert.Contains(t, err.Error(), "required_header_error_message")
+}
+
+func TestLoad_UniqueHeadersMissingErrorMessage_Fails(t *testing.T) {
+	// unique_headers set but unique_header_error_message empty → must fail
+	yaml := `
+excel:
+  header_row: 9
+  data_start_row: 10
+validation:
+  request:
+    required: true
+    error_message: "fill request"
+    required_header_error_message: "missing: %s"
+    unique_headers: ["X-SIGNATURE"]
+    unique_header_error_message: ""
+  response: {required: true, error_message: "x"}
+`
+	_, err := Load(writeYAML(t, yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unique_header_error_message")
 }

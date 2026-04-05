@@ -41,7 +41,22 @@ validation:
       - "URL Endpoint:\n Header Request:\n Request Body:"
       - "URL Endpoint: Header Request: Request Body:"
       - ""
-    error_message: "Request belum diisi (harus berupa curl: URL Endpoint, Header Request, Request Body)"
+    error_message: "Request belum diisi"
+    # Rule 3: every test case Request must contain all of these header keys
+    required_headers:
+      - "URL"
+      - "Content-Type"
+      - "Authorization"
+      - "X-SIGNATURE"
+      - "X-TIMESTAMP"
+      - "X-EXTERNAL-ID"
+      - "X-PARTNER-ID"
+    required_header_error_message: "Header wajib tidak ditemukan di Request: %s"
+    # Rule 4: these header values must be unique across all rows in the same sheet
+    unique_headers:
+      - "X-SIGNATURE"
+      - "X-TIMESTAMP"
+    unique_header_error_message: "Nilai %s harus unik untuk setiap test case, ditemukan nilai yang sama"
 
   response:
     required: true
@@ -49,19 +64,21 @@ validation:
       - "Response Body:"
       - ""
     error_message: "Response Body belum diisi"
+    # Rule 2: at least one keyword from Expected Result must appear in Response
+    match_expected_result: true
+    match_error_message: "Response tidak sesuai dengan Expected Result"
+    # Rule 5: if Expected Result contains this keyword, Response must include the key below
+    success_keyword: "Successful"
+    success_must_contain: "responseMessage"
+    success_error_message: "responseMessage wajib ada di Response jika Expected Result mengandung 'Successful'"
 
+  # Rule 6: Result and Notes columns are not validated
   result:
-    required: true
-    allowed_values:
-      - "Passed"
-      - "Not Passed"
-      - "passed"
-      - "not passed"
-      - "PASSED"
-      - "NOT PASSED"
-    error_message: "Result belum diisi (isi dengan: Passed / Not Passed)"
-    invalid_value_message: "Result tidak valid, harus Passed atau Not Passed"
+    required: false
+    allowed_values: []
+    error_message: ""
+    invalid_value_message: ""
 
   notes:
-    required_if_result: "not passed"   # case-insensitive match
-    error_message: "Notes wajib diisi jika Result adalah Not Passed"
+    required_if_result: ""
+    error_message: ""
