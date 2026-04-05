@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jefdimar/briapi-sit-validator/internal/config"
+	"github.com/jefdimar/briapi-sit-validator/internal/gdrive"
 	"github.com/jefdimar/briapi-sit-validator/internal/parser"
 	"github.com/jefdimar/briapi-sit-validator/internal/reporter"
 	"github.com/jefdimar/briapi-sit-validator/internal/validator"
@@ -17,7 +18,12 @@ import (
 
 // setupRouter builds and returns the Gin engine with all routes registered.
 // Extracted from main() to allow handler-level testing.
-func setupRouter(cfg *config.Config) *gin.Engine {
+// driveClient is optional; pass nil (or omit) when Drive integration is not configured.
+func setupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine {
+	var driveClient *gdrive.Client
+	if len(driveClients) > 0 {
+		driveClient = driveClients[0]
+	}
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
@@ -122,6 +128,14 @@ func setupRouter(cfg *config.Config) *gin.Engine {
 				slog.Error("excel reporter error", "request_id", reqID, "error", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 				return
+			}
+			if driveClient != nil {
+				driveURL, driveErr := driveClient.UploadExcel(c.Request.Context(), fh.Filename, data)
+				if driveErr != nil {
+					slog.Error("drive upload error", "request_id", reqID, "error", driveErr)
+				} else {
+					c.Header("X-Drive-File-URL", driveURL)
+				}
 			}
 			c.Header("Content-Disposition", `attachment; filename="sit_validation_report.xlsx"`)
 			c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
