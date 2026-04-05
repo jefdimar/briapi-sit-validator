@@ -8,15 +8,15 @@
 //
 // Usage:
 //
-//	GOOGLE_CLIENT_ID=<id> GOOGLE_CLIENT_SECRET=<secret> \
-//	  go run scripts/get-drive-token/main.go
+//	go run scripts/get-drive-token/main.go
 //
-// Or if you have already filled in .env:
-//
-//	source .env && go run scripts/get-drive-token/main.go
+// The script automatically reads GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET
+// from a .env file in the current directory (or from shell environment
+// variables if you prefer to export them manually).
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -35,14 +35,52 @@ const (
 	listenAddr  = ":8085"
 )
 
+// loadDotEnv loads key=value pairs from a .env file into the process
+// environment.  Existing env vars are never overridden.
+func loadDotEnv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return // .env is optional
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		if len(val) >= 2 {
+			if (val[0] == '"' && val[len(val)-1] == '"') ||
+				(val[0] == '\'' && val[len(val)-1] == '\'') {
+				val = val[1 : len(val)-1]
+			}
+		}
+		if os.Getenv(key) == "" {
+			os.Setenv(key, val)
+		}
+	}
+}
+
 func main() {
+	loadDotEnv(".env")
+
 	clientID := os.Getenv("GOOGLE_CLIENT_ID")
 	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 
 	if clientID == "" || clientSecret == "" {
 		fmt.Fprintln(os.Stderr, "Error: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set.")
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Usage:")
+		fmt.Fprintln(os.Stderr, "Add them to your .env file (see .env.example) and re-run:")
+		fmt.Fprintln(os.Stderr, "  go run scripts/get-drive-token/main.go")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Or pass them inline:")
 		fmt.Fprintln(os.Stderr, "  GOOGLE_CLIENT_ID=<id> GOOGLE_CLIENT_SECRET=<secret> \\")
 		fmt.Fprintln(os.Stderr, "    go run scripts/get-drive-token/main.go")
 		os.Exit(1)
