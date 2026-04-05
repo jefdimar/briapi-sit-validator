@@ -48,25 +48,50 @@ type ColumnsConfig struct {
 }
 
 type ValidationConfig struct {
-	Request  FieldValidation  `yaml:"request"`
-	Response FieldValidation  `yaml:"response"`
-	Result   ResultValidation `yaml:"result"`
-	Notes    NotesValidation  `yaml:"notes"`
+	Request  RequestValidation  `yaml:"request"`
+	Response ResponseValidation `yaml:"response"`
+	Result   ResultValidation   `yaml:"result"`
+	Notes    NotesValidation    `yaml:"notes"`
 }
 
-type FieldValidation struct {
-	Required             bool     `yaml:"required"`
-	EmptySentinelValues  []string `yaml:"empty_sentinel_values"`
-	ErrorMessage         string   `yaml:"error_message"`
+// RequestValidation holds rules for the Request column.
+type RequestValidation struct {
+	Required            bool     `yaml:"required"`
+	EmptySentinelValues []string `yaml:"empty_sentinel_values"`
+	ErrorMessage        string   `yaml:"error_message"`
+	// Rule 3: every non-empty Request must contain all these header keys.
+	RequiredHeaders            []string `yaml:"required_headers"`
+	RequiredHeaderErrorMessage string   `yaml:"required_header_error_message"`
+	// Rule 4: these header values must be unique across all rows in a sheet.
+	UniqueHeaders            []string `yaml:"unique_headers"`
+	UniqueHeaderErrorMessage string   `yaml:"unique_header_error_message"`
 }
 
+// ResponseValidation holds rules for the Response column.
+type ResponseValidation struct {
+	Required            bool     `yaml:"required"`
+	EmptySentinelValues []string `yaml:"empty_sentinel_values"`
+	ErrorMessage        string   `yaml:"error_message"`
+	// Rule 2: at least one keyword from Expected Result must appear in Response.
+	MatchExpectedResult bool   `yaml:"match_expected_result"`
+	MatchErrorMessage   string `yaml:"match_error_message"`
+	// Rule 5: if Expected Result contains SuccessKeyword, Response must include SuccessMustContain.
+	SuccessKeyword      string `yaml:"success_keyword"`
+	SuccessMustContain  string `yaml:"success_must_contain"`
+	SuccessErrorMessage string `yaml:"success_error_message"`
+}
+
+// ResultValidation is kept for backwards-compatible YAML parsing; validation is
+// disabled when Required is false (rule 6).
 type ResultValidation struct {
 	Required            bool     `yaml:"required"`
 	AllowedValues       []string `yaml:"allowed_values"`
-	ErrorMessage        string   `yaml:"error_message"`         // used when result is empty
-	InvalidValueMessage string   `yaml:"invalid_value_message"` // used when result is not in allowed_values
+	ErrorMessage        string   `yaml:"error_message"`
+	InvalidValueMessage string   `yaml:"invalid_value_message"`
 }
 
+// NotesValidation is kept for backwards-compatible YAML parsing; validation is
+// disabled when RequiredIfResult is empty (rule 6).
 type NotesValidation struct {
 	RequiredIfResult string `yaml:"required_if_result"`
 	ErrorMessage     string `yaml:"error_message"`
@@ -109,20 +134,19 @@ func (c *Config) validate() error {
 	if c.Excel.DataStartRow <= c.Excel.HeaderRow {
 		return errors.New("excel.data_start_row must be greater than excel.header_row")
 	}
-	if len(c.Validation.Result.AllowedValues) == 0 {
-		return errors.New("validation.result.allowed_values must not be empty")
+	if c.Validation.Request.Required && strings.TrimSpace(c.Validation.Request.ErrorMessage) == "" {
+		return errors.New("validation.request.error_message must not be empty when request is required")
 	}
-	msgs := map[string]string{
-		"validation.request.error_message":              c.Validation.Request.ErrorMessage,
-		"validation.response.error_message":             c.Validation.Response.ErrorMessage,
-		"validation.result.error_message":               c.Validation.Result.ErrorMessage,
-		"validation.result.invalid_value_message":       c.Validation.Result.InvalidValueMessage,
-		"validation.notes.error_message":                c.Validation.Notes.ErrorMessage,
+	if c.Validation.Response.Required && strings.TrimSpace(c.Validation.Response.ErrorMessage) == "" {
+		return errors.New("validation.response.error_message must not be empty when response is required")
 	}
-	for field, msg := range msgs {
-		if strings.TrimSpace(msg) == "" {
-			return fmt.Errorf("%s must not be empty", field)
-		}
+	if c.Validation.Request.Required && len(c.Validation.Request.RequiredHeaders) > 0 &&
+		strings.TrimSpace(c.Validation.Request.RequiredHeaderErrorMessage) == "" {
+		return errors.New("validation.request.required_header_error_message must not be empty when required_headers is set")
+	}
+	if c.Validation.Request.Required && len(c.Validation.Request.UniqueHeaders) > 0 &&
+		strings.TrimSpace(c.Validation.Request.UniqueHeaderErrorMessage) == "" {
+		return errors.New("validation.request.unique_header_error_message must not be empty when unique_headers is set")
 	}
 	return nil
 }

@@ -33,25 +33,27 @@ func testConfig() *config.Config {
 			},
 		},
 		Validation: config.ValidationConfig{
-			Request: config.FieldValidation{
-				Required:            true,
-				EmptySentinelValues: []string{"URL Endpoint:\n Header Request:\n Request Body:", ""},
-				ErrorMessage:        "Request belum diisi",
+			Request: config.RequestValidation{
+				Required:                   true,
+				EmptySentinelValues:        []string{"URL Endpoint:\n Header Request:\n Request Body:", ""},
+				ErrorMessage:               "Request belum diisi",
+				RequiredHeaders:            []string{"URL", "Content-Type", "Authorization", "X-SIGNATURE", "X-TIMESTAMP", "X-EXTERNAL-ID", "X-PARTNER-ID"},
+				RequiredHeaderErrorMessage: "Header wajib tidak ditemukan di Request: %s",
+				UniqueHeaders:              []string{"X-SIGNATURE", "X-TIMESTAMP"},
+				UniqueHeaderErrorMessage:   "Nilai %s harus unik untuk setiap test case, ditemukan nilai yang sama",
 			},
-			Response: config.FieldValidation{
+			Response: config.ResponseValidation{
 				Required:            true,
 				EmptySentinelValues: []string{"Response Body:", ""},
 				ErrorMessage:        "Response Body belum diisi",
+				MatchExpectedResult: true,
+				MatchErrorMessage:   "Response tidak sesuai dengan Expected Result",
+				SuccessKeyword:      "Successful",
+				SuccessMustContain:  "responseMessage",
+				SuccessErrorMessage: "responseMessage wajib ada di Response",
 			},
-			Result: config.ResultValidation{
-				Required:      true,
-				AllowedValues: []string{"Passed", "Not Passed", "passed", "not passed", "PASSED", "NOT PASSED"},
-				ErrorMessage:  "Result belum diisi",
-			},
-			Notes: config.NotesValidation{
-				RequiredIfResult: "not passed",
-				ErrorMessage:     "Notes wajib diisi jika Result adalah Not Passed",
-			},
+			Result: config.ResultValidation{Required: false},
+			Notes:  config.NotesValidation{},
 		},
 	}
 }
@@ -77,17 +79,39 @@ func cell(col, row int) string {
 	return name
 }
 
+// okRequest returns a fully-valid request string with unique signature/timestamp
+// derived from the row identifier so cross-row uniqueness checks pass.
+func okRequest(rowID string) string {
+	return "URL: https://api.bri.co.id/v2/transfer\n" +
+		"Content-Type: application/json\n" +
+		"Authorization: Bearer token123\n" +
+		"X-SIGNATURE: sig-" + rowID + "\n" +
+		"X-TIMESTAMP: 2025-01-01T10:00:00+07:00-" + rowID + "\n" +
+		"X-EXTERNAL-ID: ext-" + rowID + "\n" +
+		"X-PARTNER-ID: partner-001"
+}
+
 // addOKRow writes a fully-complete test case row at the given 1-indexed rowNum.
 func addOKRow(f *excelize.File, sheet string, rowNum int, no string) {
-	vals := []interface{}{no, "Any Service", "Happy Path", "200 OK", "curl ...", `{"responseCode":"00"}`, "Passed", ""}
+	vals := []interface{}{
+		no, "Any Service", "Happy Path", "Successful",
+		okRequest(no),
+		`{"responseCode":"2001600","responseMessage":"Successful"}`,
+		"Passed", "",
+	}
 	for col, val := range vals {
 		f.SetCellValue(sheet, cell(col+1, rowNum), val)
 	}
 }
 
-// addIncompleteRow writes a row missing the request field.
+// addIncompleteRow writes a row missing the request field (empty → fails required-header checks too).
 func addIncompleteRow(f *excelize.File, sheet string, rowNum int, no string) {
-	vals := []interface{}{no, "Any Service", "Error Path", "4xx", "", `{"responseCode":"01"}`, "Not Passed", "some note"}
+	vals := []interface{}{
+		no, "Any Service", "Error Path", "Successful",
+		"", // empty request
+		`{"responseCode":"2001600","responseMessage":"Successful"}`,
+		"Not Passed", "some note",
+	}
 	for col, val := range vals {
 		f.SetCellValue(sheet, cell(col+1, rowNum), val)
 	}

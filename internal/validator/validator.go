@@ -1,6 +1,7 @@
 package validator
 
 import (
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -62,6 +63,13 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 	var testCases []model.TestCaseResult
 	dataStart := cfg.Excel.DataStartRow - 1 // convert to 0-indexed
 
+	// Rule 4: track header values per row for uniqueness checking.
+	// headerValues[headerName][extractedValue] = []int{rowIndexInTestCases}
+	headerValues := make(map[string]map[string][]int, len(cfg.Validation.Request.UniqueHeaders))
+	for _, h := range cfg.Validation.Request.UniqueHeaders {
+		headerValues[h] = make(map[string][]int)
+	}
+
 	for rowIdx := dataStart; rowIdx < len(rows); rowIdx++ {
 		row := rows[rowIdx]
 
@@ -76,12 +84,37 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 
 		tc := validateTestCase(row, cfg.Excel.Columns, cfg.Validation)
 		tc.RowNumber = rowIdx + 1 // store 1-indexed Excel row for reporter and logs
+
+		// Collect header values for uniqueness check
+		if cfg.Excel.Columns.Request < len(row) {
+			req := strings.TrimSpace(row[cfg.Excel.Columns.Request])
+			for header := range headerValues {
+				if val := extractHeaderValue(req, header); val != "" {
+					headerValues[header][val] = append(headerValues[header][val], len(testCases))
+				}
+			}
+		}
+
 		if tc.Status == "incomplete" {
 			logger.Info("row incomplete", "row", tc.RowNumber, "no", tc.No, "issues", len(tc.Issues))
 		} else {
 			logger.Debug("row ok", "row", tc.RowNumber, "no", tc.No)
 		}
 		testCases = append(testCases, tc)
+	}
+
+	// Rule 4 post-processing: flag rows whose header value appears more than once.
+	for header, valMap := range headerValues {
+		for _, indices := range valMap {
+			if len(indices) < 2 {
+				continue
+			}
+			msg := fmt.Sprintf(cfg.Validation.Request.UniqueHeaderErrorMessage, header)
+			for _, idx := range indices {
+				testCases[idx].Issues = append(testCases[idx].Issues, msg)
+				testCases[idx].Status = "incomplete"
+			}
+		}
 	}
 
 	if testCases == nil {
@@ -96,6 +129,20 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 		Summary:   summary,
 		TestCases: testCases,
 	}
+}
+
+// extractHeaderValue extracts the value that follows "<headerName>:" on any line
+// of the request text (case-insensitive). Returns "" if the header is absent.
+func extractHeaderValue(request, headerName string) string {
+	normalized := strings.ReplaceAll(request, "\r\n", "\n")
+	prefix := strings.ToLower(headerName) + ":"
+	for _, line := range strings.Split(normalized, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+			return strings.TrimSpace(trimmed[len(headerName)+1:])
+		}
+	}
+	return ""
 }
 
 func buildSheetSummary(tcs []model.TestCaseResult) model.SheetSummary {
