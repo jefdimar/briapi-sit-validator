@@ -3,6 +3,7 @@ package validator
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/jefdimar/briapi-sit-validator/internal/config"
@@ -354,6 +355,100 @@ func TestBuildReport_Empty(t *testing.T) {
 	report := buildReport(nil)
 	assert.Equal(t, "ok", report.Status)
 	assert.Equal(t, 0, report.Summary.TotalSheets)
+}
+
+// --- per-sheet config tests ------------------------------------------------
+
+func TestValidate_PerSheetConfig_Override(t *testing.T) {
+	cfg := testConfig()
+	// Override for "ProductA" requires no headers (different rule set).
+	overrideValidation := cfg.Validation
+	overrideValidation.Request.RequiredHeaders = []string{"URL"} // only URL required
+	cfg.SheetOverrides = map[string]config.SheetOverride{
+		"ProductA": {Validation: &overrideValidation},
+	}
+
+	p := buildXlsx(t, func(f *excelize.File) {
+		f.NewSheet("ProductA")
+		setMeta(f, "ProductA", "Bank", "Partner", "2025-01-01")
+		// Row with only URL header — would fail global rules (missing Content-Type etc.)
+		// but should pass with the override that only requires URL.
+		f.SetCellValue("ProductA", cell(1, 10), "1.1")
+		f.SetCellValue("ProductA", cell(2, 10), "Service")
+		f.SetCellValue("ProductA", cell(3, 10), "Scenario")
+		f.SetCellValue("ProductA", cell(4, 10), "Successful")
+		f.SetCellValue("ProductA", cell(5, 10),
+			"URL: https://api.bri.co.id/v2/transfer\n"+
+				"X-SIGNATURE: sig-unique-1\n"+
+				"X-TIMESTAMP: ts-unique-1")
+		f.SetCellValue("ProductA", cell(6, 10),
+			`{"responseCode":"2001600","responseMessage":"Successful"}`)
+	})
+
+	report := Validate(p, cfg, []string{"ProductA"}, "test-req")
+
+	require.Len(t, report.Sheets, 1)
+	s := report.Sheets[0]
+	// With the override (only URL required), all headers are satisfied.
+	assert.Equal(t, 0, s.Summary.Incomplete, "override should relax header rules")
+}
+
+// --- anomaly detection tests -----------------------------------------------
+
+func TestValidate_Anomaly_MissingMetadata(t *testing.T) {
+	cfg := testConfig()
+	p := buildXlsx(t, func(f *excelize.File) {
+		f.NewSheet("ProductA")
+		// provider_name missing (no value in C3)
+		setMeta(f, "ProductA", "", "Partner", "2025-01-01")
+		addOKRow(f, "ProductA", 10, "1.1")
+	})
+
+	report := Validate(p, cfg, []string{"ProductA"}, "test-req")
+
+	require.Len(t, report.Sheets, 1)
+	s := report.Sheets[0]
+	require.NotEmpty(t, s.Anomalies, "missing metadata should produce anomaly")
+	found := false
+	for _, a := range s.Anomalies {
+		if strings.Contains(a, "provider_name") {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "anomaly should mention provider_name")
+}
+
+func TestValidate_Anomaly_NoTestCases(t *testing.T) {
+	cfg := testConfig()
+	p := buildXlsx(t, func(f *excelize.File) {
+		f.NewSheet("ProductA")
+		setMeta(f, "ProductA", "Bank", "Partner", "2025-01-01")
+		// intentionally leave all data rows empty
+	})
+
+	report := Validate(p, cfg, []string{"ProductA"}, "test-req")
+
+	require.Len(t, report.Sheets, 1)
+	s := report.Sheets[0]
+	require.NotEmpty(t, s.Anomalies, "no test cases should produce anomaly")
+}
+
+func TestBuildReport_SheetWithAnomalies_CountsAsIncomplete(t *testing.T) {
+	sheets := []model.SheetReport{
+		makeSheetReport("A", 5, 5), // all OK, no anomalies
+		{
+			SheetName: "B",
+			Anomalies: []string{"Header row 9 tidak ditemukan"},
+			Summary:   model.SheetSummary{Total: 0, OK: 0, Incomplete: 0},
+			TestCases: []model.TestCaseResult{},
+		},
+	}
+	report := buildReport(sheets)
+
+	assert.Equal(t, "incomplete", report.Status)
+	assert.Equal(t, 1, report.Summary.SheetsOK)
+	assert.Equal(t, 1, report.Summary.SheetsIncomplete)
 }
 
 // --- makeSet / inSlice tests -----------------------------------------------

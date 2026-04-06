@@ -134,9 +134,11 @@ func sitXlsx(t *testing.T) []byte {
 }
 
 // allSkippedXlsx builds an xlsx where every sheet is in the skip list.
+// The default "Sheet1" created by excelize is renamed so it doesn't leak as a product sheet.
 func allSkippedXlsx(t *testing.T) []byte {
 	return buildXlsxBytes(t, func(f *excelize.File) {
-		f.NewSheet("Changelog")
+		// Rename the default "Sheet1" to a skipped name so the file has no product sheets.
+		f.SetSheetName("Sheet1", "Changelog")
 	})
 }
 
@@ -197,14 +199,65 @@ func TestValidate_CorruptXlsx_Returns422(t *testing.T) {
 
 func TestValidate_NoProductSheets_Returns422(t *testing.T) {
 	router := setupRouter(testCfg())
-	// The only sheet "Changelog" is in skip_sheets, filter requests it explicitly
+	// The only sheet "Changelog" is in skip_sheets; no filter → validator sees 0 product sheets.
 	xlsxData := allSkippedXlsx(t)
+	body, ct := multipartBody(t, "file", "sit.xlsx", xlsxData)
+
+	w := perform(router, "POST", "/api/v1/validate", body, ct)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Contains(t, w.Body.String(), "no recognizable product sheets found")
+}
+
+func TestValidate_InvalidSheetName_Returns400(t *testing.T) {
+	router := setupRouter(testCfg())
+	// sitXlsx has "ProductA"; request a sheet that does not exist.
+	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
+
+	w := perform(router, "POST", "/api/v1/validate?sheets=NonExistent", body, ct)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "requested sheets not found in file", resp["error"])
+
+	invalidSheets, ok := resp["invalid_sheets"].([]interface{})
+	require.True(t, ok, "invalid_sheets should be an array")
+	require.Len(t, invalidSheets, 1)
+	assert.Equal(t, "NonExistent", invalidSheets[0])
+}
+
+func TestValidate_MultipleInvalidSheetNames_Returns400(t *testing.T) {
+	router := setupRouter(testCfg())
+	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
+
+	w := perform(router, "POST", "/api/v1/validate?sheets=Ghost1,Ghost2", body, ct)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	invalidSheets, ok := resp["invalid_sheets"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, invalidSheets, 2)
+}
+
+func TestValidate_SkippedSheetInFilter_Returns400(t *testing.T) {
+	router := setupRouter(testCfg())
+	// "Changelog" is in skip_sheets; requesting it should return 400, not 422.
+	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
+		f.NewSheet("Changelog")
+		f.NewSheet("ProductA")
+		setSheetMeta(f, "ProductA")
+		writeRow(f, "ProductA", 10, "1.1")
+	})
 	body, ct := multipartBody(t, "file", "sit.xlsx", xlsxData)
 
 	w := perform(router, "POST", "/api/v1/validate?sheets=Changelog", body, ct)
 
-	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	assert.Contains(t, w.Body.String(), "no recognizable product sheets found")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "requested sheets not found in file")
 }
 
 // --- POST /api/v1/validate — success (JSON) --------------------------------

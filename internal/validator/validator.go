@@ -50,23 +50,33 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 
 	meta := validateMetadata(p, sheet, cfg.Excel.Metadata)
 
+	// Detect structural anomalies early; report them even if row parsing also fails.
+	anomalies := detectSheetAnomalies(p, sheet, cfg, meta)
+	if len(anomalies) > 0 {
+		logger.Info("sheet anomalies detected", "anomalies", len(anomalies))
+	}
+
 	rows, err := p.GetRows(sheet)
 	if err != nil {
 		logger.Error("failed to read rows", "error", err, "row", 0)
 		return model.SheetReport{
 			SheetName: sheet,
+			Anomalies: anomalies,
 			Metadata:  meta,
 			TestCases: []model.TestCaseResult{},
 		}
 	}
+
+	// Use the sheet-specific validation config if one is defined; fall back to global.
+	sheetValidation := cfg.ValidationForSheet(sheet)
 
 	var testCases []model.TestCaseResult
 	dataStart := cfg.Excel.DataStartRow - 1 // convert to 0-indexed
 
 	// Rule 4: track header values per row for uniqueness checking.
 	// headerValues[headerName][extractedValue] = []int{rowIndexInTestCases}
-	headerValues := make(map[string]map[string][]int, len(cfg.Validation.Request.UniqueHeaders))
-	for _, h := range cfg.Validation.Request.UniqueHeaders {
+	headerValues := make(map[string]map[string][]int, len(sheetValidation.Request.UniqueHeaders))
+	for _, h := range sheetValidation.Request.UniqueHeaders {
 		headerValues[h] = make(map[string][]int)
 	}
 
@@ -82,7 +92,7 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 			break
 		}
 
-		tc := validateTestCase(row, cfg.Excel.Columns, cfg.Validation)
+		tc := validateTestCase(row, cfg.Excel.Columns, sheetValidation)
 		tc.RowNumber = rowIdx + 1 // store 1-indexed Excel row for reporter and logs
 
 		// Collect header values for uniqueness check
@@ -109,7 +119,7 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 			if len(indices) < 2 {
 				continue
 			}
-			msg := fmt.Sprintf(cfg.Validation.Request.UniqueHeaderErrorMessage, header)
+			msg := fmt.Sprintf(sheetValidation.Request.UniqueHeaderErrorMessage, header)
 			for _, idx := range indices {
 				testCases[idx].Issues = append(testCases[idx].Issues, msg)
 				testCases[idx].Status = "incomplete"
@@ -125,6 +135,7 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 
 	return model.SheetReport{
 		SheetName: sheet,
+		Anomalies: anomalies,
 		Metadata:  meta,
 		Summary:   summary,
 		TestCases: testCases,
@@ -162,7 +173,7 @@ func buildReport(sheets []model.SheetReport) model.ValidationReport {
 	g.TotalSheets = len(sheets)
 
 	for _, s := range sheets {
-		if s.Summary.Incomplete == 0 {
+		if s.Summary.Incomplete == 0 && len(s.Anomalies) == 0 {
 			g.SheetsOK++
 		} else {
 			g.SheetsIncomplete++

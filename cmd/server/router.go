@@ -114,6 +114,32 @@ func setupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine
 			}
 		}
 
+		// When the caller provides explicit sheet names, validate that every
+		// requested sheet actually exists in the file (after removing skip_sheets).
+		// This prevents silent no-op validation when a sheet name is mistyped.
+		if len(filterSheets) > 0 {
+			fileSkipSet := makeSkipSet(cfg.Excel.SkipSheets)
+			fileSheetSet := make(map[string]bool)
+			for _, s := range p.SheetNames() {
+				if !fileSkipSet[s] {
+					fileSheetSet[s] = true
+				}
+			}
+			var invalidSheets []string
+			for _, s := range filterSheets {
+				if !fileSheetSet[s] {
+					invalidSheets = append(invalidSheets, s)
+				}
+			}
+			if len(invalidSheets) > 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":          "requested sheets not found in file",
+					"invalid_sheets": invalidSheets,
+				})
+				return
+			}
+		}
+
 		report := validator.Validate(p, cfg, filterSheets, reqID)
 
 		if len(report.Sheets) == 0 {

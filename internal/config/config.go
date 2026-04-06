@@ -11,9 +11,28 @@ import (
 
 // Config is the top-level configuration loaded from rules.yaml.
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Excel      ExcelConfig      `yaml:"excel"`
-	Validation ValidationConfig `yaml:"validation"`
+	Server         ServerConfig                `yaml:"server"`
+	Excel          ExcelConfig                 `yaml:"excel"`
+	Validation     ValidationConfig            `yaml:"validation"`
+	SheetOverrides map[string]SheetOverride    `yaml:"sheet_overrides"`
+}
+
+// SheetOverride allows a specific sheet to use a different ValidationConfig
+// instead of the global one. Only the Validation field is overridable.
+type SheetOverride struct {
+	Validation *ValidationConfig `yaml:"validation,omitempty"`
+}
+
+// ValidationForSheet returns the effective ValidationConfig for the named sheet.
+// If a sheet-specific override is defined in SheetOverrides, it is returned in full;
+// otherwise the global Validation config is used as a fallback.
+func (c *Config) ValidationForSheet(sheetName string) ValidationConfig {
+	if c.SheetOverrides != nil {
+		if override, ok := c.SheetOverrides[sheetName]; ok && override.Validation != nil {
+			return *override.Validation
+		}
+	}
+	return c.Validation
 }
 
 type ServerConfig struct {
@@ -147,6 +166,24 @@ func (c *Config) validate() error {
 	if c.Validation.Request.Required && len(c.Validation.Request.UniqueHeaders) > 0 &&
 		strings.TrimSpace(c.Validation.Request.UniqueHeaderErrorMessage) == "" {
 		return errors.New("validation.request.unique_header_error_message must not be empty when unique_headers is set")
+	}
+	for sheet, override := range c.SheetOverrides {
+		if override.Validation == nil {
+			continue
+		}
+		v := override.Validation
+		if v.Request.Required && strings.TrimSpace(v.Request.ErrorMessage) == "" {
+			return fmt.Errorf("sheet_overrides[%q].validation.request.error_message must not be empty when request is required", sheet)
+		}
+		if v.Response.Required && strings.TrimSpace(v.Response.ErrorMessage) == "" {
+			return fmt.Errorf("sheet_overrides[%q].validation.response.error_message must not be empty when response is required", sheet)
+		}
+		if v.Request.Required && len(v.Request.RequiredHeaders) > 0 && strings.TrimSpace(v.Request.RequiredHeaderErrorMessage) == "" {
+			return fmt.Errorf("sheet_overrides[%q].validation.request.required_header_error_message must not be empty when required_headers is set", sheet)
+		}
+		if v.Request.Required && len(v.Request.UniqueHeaders) > 0 && strings.TrimSpace(v.Request.UniqueHeaderErrorMessage) == "" {
+			return fmt.Errorf("sheet_overrides[%q].validation.request.unique_header_error_message must not be empty when unique_headers is set", sheet)
+		}
 	}
 	return nil
 }

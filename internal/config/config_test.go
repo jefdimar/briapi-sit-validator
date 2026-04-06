@@ -182,3 +182,68 @@ validation:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unique_header_error_message")
 }
+
+// --- SheetOverrides / ValidationForSheet tests -------------------------------
+
+func TestValidationForSheet_NoOverride_ReturnsGlobal(t *testing.T) {
+	cfg, err := Load(writeYAML(t, minimalValidYAML))
+	require.NoError(t, err)
+
+	v := cfg.ValidationForSheet("AnySheet")
+	assert.Equal(t, cfg.Validation, v)
+}
+
+func TestValidationForSheet_WithOverride_ReturnsOverride(t *testing.T) {
+	yaml := minimalValidYAML + `
+sheet_overrides:
+  "QR MPM":
+    validation:
+      request:
+        required: true
+        error_message: "override request msg"
+      response:
+        required: true
+        error_message: "override response msg"
+`
+	cfg, err := Load(writeYAML(t, yaml))
+	require.NoError(t, err)
+
+	v := cfg.ValidationForSheet("QR MPM")
+	assert.Equal(t, "override request msg", v.Request.ErrorMessage)
+	assert.Equal(t, "override response msg", v.Response.ErrorMessage)
+
+	// Other sheets still get the global config.
+	global := cfg.ValidationForSheet("Other Sheet")
+	assert.Equal(t, cfg.Validation, global)
+}
+
+func TestValidationForSheet_NilValidation_ReturnsGlobal(t *testing.T) {
+	// An override entry with no validation block → falls back to global.
+	yaml := minimalValidYAML + `
+sheet_overrides:
+  "Empty Override": {}
+`
+	cfg, err := Load(writeYAML(t, yaml))
+	require.NoError(t, err)
+
+	v := cfg.ValidationForSheet("Empty Override")
+	assert.Equal(t, cfg.Validation, v)
+}
+
+func TestLoad_SheetOverride_MissingRequestErrorMessage_Fails(t *testing.T) {
+	yaml := minimalValidYAML + `
+sheet_overrides:
+  "Bad Sheet":
+    validation:
+      request:
+        required: true
+        error_message: ""
+      response:
+        required: true
+        error_message: "x"
+`
+	_, err := Load(writeYAML(t, yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "sheet_overrides")
+	assert.Contains(t, err.Error(), "error_message")
+}

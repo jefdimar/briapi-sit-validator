@@ -20,6 +20,7 @@ type GlobalSummary struct {
 // SheetReport holds the validation result for a single product sheet.
 type SheetReport struct {
 	SheetName string               `json:"sheet_name"`
+	Anomalies []string             `json:"anomalies,omitempty"` // structural issues detected during parsing
 	Metadata  map[string]MetaField `json:"metadata"`
 	Summary   SheetSummary         `json:"summary"`
 	TestCases []TestCaseResult     `json:"test_cases"`

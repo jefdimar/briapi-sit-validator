@@ -82,3 +82,48 @@ validation:
   notes:
     required_if_result: ""
     error_message: ""
+
+# Per-sheet validation overrides.
+# If a sheet name matches a key here, its validation block completely replaces
+# the global `validation` config above for that sheet only.
+# Remove or leave empty to use global rules for all sheets.
+#
+# Example (uncomment and adjust as needed):
+# sheet_overrides:
+#   "QR MPM":
+#     validation:
+#       request:
+#         required: true
+#         empty_sentinel_values:
+#           - "URL Endpoint:\n Header Request:\n Request Body:"
+#           - ""
+#         error_message: "Request belum diisi"
+#         required_headers:
+#           - "URL"
+#           - "Content-Type"
+#           - "X-SIGNATURE"
+#           - "X-TIMESTAMP"
+#         required_header_error_message: "Header wajib tidak ditemukan di Request: %s"
+#         unique_headers:
+#           - "X-SIGNATURE"
+#           - "X-TIMESTAMP"
+#         unique_header_error_message: "Nilai %s harus unik untuk setiap test case, ditemukan nilai yang sama"
+#       response:
+#         required: true
+#         empty_sentinel_values:
+#           - "Response Body:"
+#           - ""
+#         error_message: "Response Body belum diisi"
+#         match_expected_result: true
+#         match_error_message: "Response tidak sesuai dengan Expected Result"
+#         success_keyword: "Successful"
+#         success_must_contain: "responseMessage"
+#         success_error_message: "responseMessage wajib ada di Response jika Expected Result mengandung 'Successful'"
+#       result:
+#         required: false
+#         allowed_values: []
+#         error_message: ""
+#         invalid_value_message: ""
+#       notes:
+#         required_if_result: ""
+#         error_message: ""
