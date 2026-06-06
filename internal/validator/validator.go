@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/jefdimar/briapi-sit-validator/internal/config"
+	"github.com/jefdimar/briapi-sit-validator/internal/metrics"
 	"github.com/jefdimar/briapi-sit-validator/internal/model"
 	"github.com/jefdimar/briapi-sit-validator/internal/parser"
 )
@@ -49,10 +50,16 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 	logger := slog.With("request_id", requestID, "sheet", sheet)
 
 	meta := validateMetadata(p, sheet, cfg.Excel.Metadata)
+	for key, field := range meta {
+		if field.Status == "missing" {
+			logger.Debug("metadata field missing", "key", key)
+		}
+	}
 
 	rows, err := p.GetRows(sheet)
 	if err != nil {
 		logger.Error("failed to read rows", "error", err, "row", 0)
+		metrics.ValidationSheetsTotal.WithLabelValues("incomplete").Inc()
 		return model.SheetReport{
 			SheetName: sheet,
 			Metadata:  meta,
@@ -100,6 +107,7 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 		} else {
 			logger.Debug("row ok", "row", tc.RowNumber, "no", tc.No)
 		}
+		metrics.ValidationTestCasesTotal.WithLabelValues(tc.Status).Inc()
 		testCases = append(testCases, tc)
 	}
 
@@ -112,7 +120,14 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 			msg := fmt.Sprintf(cfg.Validation.Request.UniqueHeaderErrorMessage, header)
 			for _, idx := range indices {
 				testCases[idx].Issues = append(testCases[idx].Issues, msg)
+				// Decrement "ok" count if this changes status from ok to incomplete
+				if testCases[idx].Status == "ok" {
+					metrics.ValidationTestCasesTotal.WithLabelValues("ok").Add(-1)
+					metrics.ValidationTestCasesTotal.WithLabelValues("incomplete").Inc()
+				}
 				testCases[idx].Status = "incomplete"
+				logger.Debug("unique header violation", "header", header, "row", testCases[idx].RowNumber, "no", testCases[idx].No)
+				metrics.UniqueHeaderViolationsTotal.WithLabelValues(header).Inc()
 			}
 		}
 	}
@@ -122,6 +137,12 @@ func validateSheet(p *parser.File, sheet string, cfg *config.Config, requestID s
 	}
 
 	summary := buildSheetSummary(testCases)
+
+	sheetStatus := "ok"
+	if summary.Incomplete > 0 {
+		sheetStatus = "incomplete"
+	}
+	metrics.ValidationSheetsTotal.WithLabelValues(sheetStatus).Inc()
 
 	return model.SheetReport{
 		SheetName: sheet,

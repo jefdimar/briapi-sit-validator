@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jefdimar/briapi-sit-validator/internal/apierror"
 	"github.com/jefdimar/briapi-sit-validator/internal/config"
+	"github.com/jefdimar/briapi-sit-validator/internal/gdrive"
 	"github.com/jefdimar/briapi-sit-validator/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +67,10 @@ func testCfg() *config.Config {
 			Notes:  config.NotesValidation{},
 		},
 	}
+}
+
+func testSetupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine {
+	return setupRouter(config.NewManagerWithConfig(cfg), driveClients...)
 }
 
 // buildXlsxBytes creates an in-memory xlsx and returns its raw bytes.
@@ -154,8 +160,22 @@ func perform(router http.Handler, method, url string, body io.Reader, contentTyp
 // --- GET /api/v1/health ----------------------------------------------------
 
 func TestHealth_Returns200(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	w := perform(router, "GET", "/api/v1/health", nil, "")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "ok", resp["status"])
+	assert.Equal(t, version, resp["version"])
+}
+
+// --- GET /api/v2/health (versioned) ----------------------------------------
+
+func TestHealthV2_Returns200(t *testing.T) {
+	router := testSetupRouter(testCfg())
+	w := perform(router, "GET", "/api/v2/health", nil, "")
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
@@ -168,35 +188,44 @@ func TestHealth_Returns200(t *testing.T) {
 // --- POST /api/v1/validate — error cases -----------------------------------
 
 func TestValidate_NoFile_Returns400(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	w := perform(router, "POST", "/api/v1/validate", nil, "")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "file is required")
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "file is required")
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 func TestValidate_NonXlsxExtension_Returns400(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "report.csv", []byte("not xlsx"))
 
 	w := perform(router, "POST", "/api/v1/validate", body, ct)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid file format: expected .xlsx")
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "invalid file format: expected .xlsx")
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 func TestValidate_CorruptXlsx_Returns422(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "broken.xlsx", []byte("this is not a valid xlsx"))
 
 	w := perform(router, "POST", "/api/v1/validate", body, ct)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	assert.Contains(t, w.Body.String(), "cannot parse excel file")
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "cannot parse excel file")
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.Code)
 }
 
 func TestValidate_NoProductSheets_Returns422(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	// The only sheet "Changelog" is in skip_sheets, filter requests it explicitly
 	xlsxData := allSkippedXlsx(t)
 	body, ct := multipartBody(t, "file", "sit.xlsx", xlsxData)
@@ -204,13 +233,29 @@ func TestValidate_NoProductSheets_Returns422(t *testing.T) {
 	w := perform(router, "POST", "/api/v1/validate?sheets=Changelog", body, ct)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
-	assert.Contains(t, w.Body.String(), "no recognizable product sheets found")
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "no recognizable product sheets found")
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.Code)
+}
+
+func TestValidate_InvalidFormat_Returns400(t *testing.T) {
+	router := testSetupRouter(testCfg())
+	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
+
+	w := perform(router, "POST", "/api/v1/validate?format=pdf", body, ct)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "invalid format")
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 // --- POST /api/v1/validate — success (JSON) --------------------------------
 
 func TestValidate_ValidFile_Returns200JSON(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
 
 	w := perform(router, "POST", "/api/v1/validate?sheets=ProductA", body, ct)
@@ -228,7 +273,7 @@ func TestValidate_ValidFile_Returns200JSON(t *testing.T) {
 }
 
 func TestValidate_JSONReport_ContainsMetadata(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
 
 	w := perform(router, "POST", "/api/v1/validate?sheets=ProductA", body, ct)
@@ -245,7 +290,7 @@ func TestValidate_JSONReport_ContainsMetadata(t *testing.T) {
 }
 
 func TestValidate_IncompleteTestCase_ReportedCorrectly(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 
 	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
 		f.NewSheet("ProductA")
@@ -274,7 +319,7 @@ func TestValidate_IncompleteTestCase_ReportedCorrectly(t *testing.T) {
 }
 
 func TestValidate_SheetFilterQueryParam(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
 		for _, sheet := range []string{"ProductA", "ProductB"} {
 			f.NewSheet(sheet)
@@ -296,7 +341,7 @@ func TestValidate_SheetFilterQueryParam(t *testing.T) {
 // --- POST /api/v1/validate — Excel format ----------------------------------
 
 func TestValidate_ExcelFormat_Returns200Xlsx(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
 
 	w := perform(router, "POST", "/api/v1/validate?sheets=ProductA&format=excel", body, ct)
@@ -312,7 +357,7 @@ func TestValidate_ExcelFormat_Returns200Xlsx(t *testing.T) {
 }
 
 func TestValidate_ExcelFormat_ContainsAnnotations(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
 
 	w := perform(router, "POST", "/api/v1/validate?sheets=ProductA&format=excel", body, ct)
@@ -338,25 +383,31 @@ func TestValidate_ExcelFormat_ContainsAnnotations(t *testing.T) {
 // --- POST /api/v1/sheets ---------------------------------------------------
 
 func TestSheets_NoFile_Returns400(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	w := perform(router, "POST", "/api/v1/sheets", nil, "")
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "file is required")
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "file is required")
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 func TestSheets_NonXlsxExtension_Returns400(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "report.csv", []byte("not xlsx"))
 
 	w := perform(router, "POST", "/api/v1/sheets", body, ct)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "invalid file format: expected .xlsx")
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "invalid file format: expected .xlsx")
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
 }
 
 func TestSheets_CorruptXlsx_Returns422(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	body, ct := multipartBody(t, "file", "broken.xlsx", []byte("not valid"))
 
 	w := perform(router, "POST", "/api/v1/sheets", body, ct)
@@ -365,7 +416,7 @@ func TestSheets_CorruptXlsx_Returns422(t *testing.T) {
 }
 
 func TestSheets_ValidFile_ReturnsSheetList(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	// sitXlsx has "Sheet1" (default) and "ProductA"
 	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
 		f.NewSheet("ProductA")
@@ -389,7 +440,7 @@ func TestSheets_ValidFile_ReturnsSheetList(t *testing.T) {
 // --- POST /api/v1/validate — sheets as form field --------------------------
 
 func TestValidate_SheetFilterFormField(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
 		for _, sheet := range []string{"ProductA", "ProductB"} {
 			f.NewSheet(sheet)
@@ -420,23 +471,25 @@ func TestValidate_SheetFilterFormField(t *testing.T) {
 // --- request logger middleware ---------------------------------------------
 
 func TestRequestLogger_SetsRequestID(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	req := httptest.NewRequest("GET", "/api/v1/health", nil)
 	req.Header.Set("X-Request-ID", "test-id-123")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "test-id-123", w.Header().Get("X-Request-ID"))
 }
 
 func TestRequestLogger_GeneratesRequestIDIfMissing(t *testing.T) {
-	router := setupRouter(testCfg())
+	router := testSetupRouter(testCfg())
 	req := httptest.NewRequest("GET", "/api/v1/health", nil)
 	// No X-Request-ID header set
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	assert.NotEmpty(t, w.Header().Get("X-Request-ID"))
 }
 
 // --- T-1: file too large (413) ---------------------------------------------
@@ -445,7 +498,7 @@ func TestValidate_FileTooLarge_Returns413(t *testing.T) {
 	// Set a 1-byte limit so even a tiny body triggers it.
 	cfg := testCfg()
 	cfg.Server.MaxUploadSizeMB = 1
-	router := setupRouter(cfg)
+	router := testSetupRouter(cfg)
 
 	// Build a body that exceeds 1 MB.
 	oversized := make([]byte, 1<<20+1) // 1 MiB + 1 byte
@@ -454,5 +507,89 @@ func TestValidate_FileTooLarge_Returns413(t *testing.T) {
 	w := perform(router, "POST", "/api/v1/validate", body, ct)
 
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
-	assert.Contains(t, w.Body.String(), "file too large")
+	var resp apierror.Response
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Error, "file too large")
+	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.Code)
+}
+
+// --- V2 endpoint tests -----------------------------------------------------
+
+func TestValidateV2_ValidFile_Returns200JSON(t *testing.T) {
+	router := testSetupRouter(testCfg())
+	body, ct := multipartBody(t, "file", "sit.xlsx", sitXlsx(t))
+
+	w := perform(router, "POST", "/api/v2/validate?sheets=ProductA", body, ct)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var report model.ValidationReport
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &report))
+	assert.Equal(t, "ok", report.Status)
+	require.Len(t, report.Sheets, 1)
+	assert.Equal(t, "ProductA", report.Sheets[0].SheetName)
+}
+
+func TestSheetsV2_ValidFile_ReturnsSheetList(t *testing.T) {
+	router := testSetupRouter(testCfg())
+	xlsxData := buildXlsxBytes(t, func(f *excelize.File) {
+		f.NewSheet("ProductA")
+	})
+	body, ct := multipartBody(t, "file", "sit.xlsx", xlsxData)
+
+	w := perform(router, "POST", "/api/v2/sheets", body, ct)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string][]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["sheets"], "ProductA")
+}
+
+// --- standardised error response shape -------------------------------------
+
+func TestErrorResponses_HaveCodeField(t *testing.T) {
+	router := testSetupRouter(testCfg())
+
+	tests := []struct {
+		name     string
+		method   string
+		url      string
+		body     func(t *testing.T) (io.Reader, string)
+		wantCode int
+	}{
+		{
+			name:   "validate no file",
+			method: "POST", url: "/api/v1/validate",
+			body:     func(t *testing.T) (io.Reader, string) { return nil, "" },
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:   "validate invalid format",
+			method: "POST", url: "/api/v1/validate?format=xml",
+			body: func(t *testing.T) (io.Reader, string) {
+				return multipartBody(t, "file", "test.xlsx", sitXlsx(t))
+			},
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:   "sheets no file",
+			method: "POST", url: "/api/v1/sheets",
+			body:     func(t *testing.T) (io.Reader, string) { return nil, "" },
+			wantCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, ct := tt.body(t)
+			w := perform(router, tt.method, tt.url, body, ct)
+			assert.Equal(t, tt.wantCode, w.Code)
+
+			var resp apierror.Response
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tt.wantCode, resp.Code, "code field must match HTTP status")
+			assert.NotEmpty(t, resp.Error, "error field must not be empty")
+		})
+	}
 }

@@ -9,17 +9,19 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jefdimar/briapi-sit-validator/internal/apierror"
 	"github.com/jefdimar/briapi-sit-validator/internal/config"
 	"github.com/jefdimar/briapi-sit-validator/internal/gdrive"
 	"github.com/jefdimar/briapi-sit-validator/internal/parser"
 	"github.com/jefdimar/briapi-sit-validator/internal/reporter"
 	"github.com/jefdimar/briapi-sit-validator/internal/validator"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // setupRouter builds and returns the Gin engine with all routes registered.
 // Extracted from main() to allow handler-level testing.
 // driveClient is optional; pass nil (or omit) when Drive integration is not configured.
-func setupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine {
+func setupRouter(mgr *config.Manager, driveClients ...*gdrive.Client) *gin.Engine {
 	var driveClient *gdrive.Client
 	if len(driveClients) > 0 {
 		driveClient = driveClients[0]
@@ -28,33 +30,45 @@ func setupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
 
-	maxBytes := int64(cfg.Server.MaxUploadSizeMB) << 20
+	// validFormats contains the accepted values for the format query parameter.
+	validFormats := map[string]bool{"json": true, "excel": true}
 
-	router.GET("/api/v1/health", func(c *gin.Context) {
+	// healthHandler is reused across API versions.
+	healthHandler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": version})
-	})
+	}
 
-	router.POST("/api/v1/sheets", func(c *gin.Context) {
+	// sheetsHandler is reused across API versions.
+	sheetsHandler := func(c *gin.Context) {
+		cfg := mgr.Get()
+		maxBytes := int64(cfg.Server.MaxUploadSizeMB) << 20
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+
+		requestID, _ := c.Get("request_id")
+		reqID := fmt.Sprintf("%v", requestID)
 
 		fh, err := c.FormFile("file")
 		if err != nil {
 			if errors.As(err, new(*http.MaxBytesError)) {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("file too large, max %dMB", cfg.Server.MaxUploadSizeMB)})
+				slog.Debug("file too large", "request_id", reqID, "error", err)
+				apierror.TooLarge(c, fmt.Sprintf("file too large, max %dMB", cfg.Server.MaxUploadSizeMB))
 				return
 			}
-			c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+			slog.Debug("file upload parameter missing", "request_id", reqID, "error", err)
+			apierror.BadRequest(c, "file is required")
 			return
 		}
 
 		if strings.ToLower(filepath.Ext(fh.Filename)) != ".xlsx" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file format: expected .xlsx"})
+			slog.Debug("invalid file extension", "request_id", reqID, "filename", fh.Filename)
+			apierror.BadRequest(c, "invalid file format: expected .xlsx")
 			return
 		}
 
 		p, err := parser.Open(fh)
 		if err != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("cannot parse excel file: %s", err.Error())})
+			slog.Debug("failed to parse excel file", "request_id", reqID, "error", err)
+			apierror.UnprocessableEntity(c, fmt.Sprintf("cannot parse excel file: %s", err.Error()))
 			return
 		}
 		defer p.Close()
@@ -71,35 +85,50 @@ func setupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine
 		}
 
 		c.JSON(http.StatusOK, gin.H{"sheets": productSheets})
-	})
+	}
 
-	router.POST("/api/v1/validate", func(c *gin.Context) {
+	// validateHandler is reused across API versions.
+	validateHandler := func(c *gin.Context) {
+		cfg := mgr.Get()
+		maxBytes := int64(cfg.Server.MaxUploadSizeMB) << 20
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+
+		requestID, _ := c.Get("request_id")
+		reqID := fmt.Sprintf("%v", requestID)
+
+		// Input validation: reject unknown format values.
+		format := strings.ToLower(c.DefaultQuery("format", "json"))
+		if !validFormats[format] {
+			slog.Debug("invalid format query parameter", "request_id", reqID, "format", format)
+			apierror.BadRequest(c, fmt.Sprintf("invalid format: %q, must be json or excel", format))
+			return
+		}
 
 		fh, err := c.FormFile("file")
 		if err != nil {
 			if errors.As(err, new(*http.MaxBytesError)) {
-				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("file too large, max %dMB", cfg.Server.MaxUploadSizeMB)})
+				slog.Debug("file too large", "request_id", reqID, "error", err)
+				apierror.TooLarge(c, fmt.Sprintf("file too large, max %dMB", cfg.Server.MaxUploadSizeMB))
 				return
 			}
-			c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+			slog.Debug("file upload parameter missing", "request_id", reqID, "error", err)
+			apierror.BadRequest(c, "file is required")
 			return
 		}
 
 		if strings.ToLower(filepath.Ext(fh.Filename)) != ".xlsx" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file format: expected .xlsx"})
+			slog.Debug("invalid file extension", "request_id", reqID, "filename", fh.Filename)
+			apierror.BadRequest(c, "invalid file format: expected .xlsx")
 			return
 		}
 
 		p, err := parser.Open(fh)
 		if err != nil {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": fmt.Sprintf("cannot parse excel file: %s", err.Error())})
+			slog.Debug("failed to parse excel file", "request_id", reqID, "error", err)
+			apierror.UnprocessableEntity(c, fmt.Sprintf("cannot parse excel file: %s", err.Error()))
 			return
 		}
 		defer p.Close()
-
-		requestID, _ := c.Get("request_id")
-		reqID := fmt.Sprintf("%v", requestID)
 
 		// sheets can be supplied as a form field (body) or query string.
 		// Form field takes precedence; query string is the fallback.
@@ -117,16 +146,16 @@ func setupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine
 		report := validator.Validate(p, cfg, filterSheets, reqID)
 
 		if len(report.Sheets) == 0 {
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "no recognizable product sheets found"})
+			slog.Debug("no product sheets found after filtering", "request_id", reqID, "filter", filterSheets)
+			apierror.UnprocessableEntity(c, "no recognizable product sheets found")
 			return
 		}
 
-		format := strings.ToLower(c.DefaultQuery("format", "json"))
 		if format == "excel" {
 			data, err := reporter.BuildExcel(p, report, cfg)
 			if err != nil {
 				slog.Error("excel reporter error", "request_id", reqID, "error", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+				apierror.Internal(c, "internal server error")
 				return
 			}
 			if driveClient != nil {
@@ -143,7 +172,26 @@ func setupRouter(cfg *config.Config, driveClients ...*gdrive.Client) *gin.Engine
 		}
 
 		c.JSON(http.StatusOK, reporter.BuildJSON(report))
-	})
+	}
+
+	// Register metrics route
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// Register v1 routes (existing API).
+	v1 := router.Group("/api/v1")
+	{
+		v1.GET("/health", healthHandler)
+		v1.POST("/sheets", sheetsHandler)
+		v1.POST("/validate", validateHandler)
+	}
+
+	// Register v2 routes (same handlers — versioned prefix for future divergence).
+	v2 := router.Group("/api/v2")
+	{
+		v2.GET("/health", healthHandler)
+		v2.POST("/sheets", sheetsHandler)
+		v2.POST("/validate", validateHandler)
+	}
 
 	return router
 }

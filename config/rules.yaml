@@ -7,14 +7,14 @@ excel:
     - Changelog
     - Daftar Isi
     - Step
-  header_row: 9          # 1-indexed row where column headers are
-  data_start_row: 10     # first test case row
+  header_row: 9 # 1-indexed row where column headers are
+  data_start_row: 10 # first test case row
 
   metadata:
     - key: provider_name
       label: "Nama Penyedia Layanan:"
       row: 3
-      col: 1             # column B (0-indexed: A=0, B=1)
+      col: 1 # column B (0-indexed: A=0, B=1)
     - key: partner_name
       label: "Nama Pengguna Layanan :"
       row: 5
@@ -25,14 +25,14 @@ excel:
       col: 1
 
   columns:
-    no:              0   # Column A
-    service:         1   # Column B
-    scenario:        2   # Column C
-    expected_result: 3   # Column D
-    request:         4   # Column E
-    response:        5   # Column F
-    result:          6   # Column G
-    notes:           7   # Column H
+    no: 0 # Column A
+    service: 1 # Column B
+    scenario: 2 # Column C
+    expected_result: 3 # Column D
+    request: 4 # Column E
+    response: 5 # Column F
+    result: 6 # Column G
+    notes: 7 # Column H
 
 validation:
   request:
@@ -44,7 +44,7 @@ validation:
     error_message: "Request belum diisi"
     # Rule 3: every test case Request must contain all of these header keys
     required_headers:
-      - "URL"
+      - "url endpoint"
       - "Content-Type"
       - "Authorization"
       - "X-SIGNATURE"

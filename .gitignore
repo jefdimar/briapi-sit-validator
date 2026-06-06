@@ -6,3 +6,6 @@ bin/
 .env
 *.swp
 .DS_Store
+.claude
+vendor/
+vendor-stubs/
